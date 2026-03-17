@@ -441,24 +441,83 @@ async function loadMoreIcons() {
 }
 
 /**
+ * 清理 SVG 字符串（防止 XSS）
+ * @param {string} svgString - 原始 SVG
+ * @returns {string} 清理后的 SVG
+ */
+function sanitizeSvg(svgString) {
+    // 创建临时 DOM 解析 SVG
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgString, 'image/svg+xml');
+
+    // 移除潜在的脚本标签
+    const scripts = doc.querySelectorAll('script');
+    scripts.forEach(script => script.remove());
+
+    // 移除事件处理器属性
+    const allElements = doc.querySelectorAll('*');
+    allElements.forEach(el => {
+        const attributes = el.attributes;
+        for (let i = attributes.length - 1; i >= 0; i--) {
+            const attr = attributes[i];
+            if (attr.name.startsWith('on')) {
+                el.removeAttribute(attr.name);
+            }
+        }
+    });
+
+    return doc.documentElement.outerHTML;
+}
+
+/**
  * 渲染图标到宫格
  * @param {YuqueIcon[]} icons - 图标列表
  * @param {boolean} append - 是否追加到现有内容
  */
 function renderIcons(icons, append = false) {
     const grid = panelElement.querySelector('.icons-grid');
-    if (!append) grid.innerHTML = '';
+    if (!append) {
+        grid.innerHTML = '';
+        // 使用事件委托，不在每个图标上绑定事件
+        grid._iconClickHandler = null;
+    }
+
+    // 事件委托处理器
+    if (!grid._iconClickHandler) {
+        grid._iconClickHandler = (e) => {
+            const iconItem = e.target.closest('.icon-item');
+            if (iconItem) {
+                const iconData = iconItem.dataset.iconData;
+                if (iconData) {
+                    try {
+                        const icon = JSON.parse(iconData);
+                        selectIcon(icon);
+                    } catch (err) {
+                        console.error('Failed to parse icon data:', err);
+                    }
+                }
+            }
+        };
+        grid.addEventListener('click', grid._iconClickHandler);
+    }
+
+    // 使用 DocumentFragment 批量插入
+    const fragment = document.createDocumentFragment();
 
     icons.forEach(icon => {
         const iconEl = document.createElement('div');
         iconEl.className = 'icon-item';
         iconEl.title = icon.name;
-        iconEl.innerHTML = icon.show_svg;
-        iconEl.dataset.iconData = JSON.stringify(icon);
 
-        iconEl.addEventListener('click', () => selectIcon(icon));
-        grid.appendChild(iconEl);
+        // 安全处理 SVG
+        const safeSvg = sanitizeSvg(icon.show_svg);
+        iconEl.innerHTML = safeSvg;
+
+        iconEl.dataset.iconData = JSON.stringify(icon);
+        fragment.appendChild(iconEl);
     });
+
+    grid.appendChild(fragment);
 }
 
 /**
@@ -470,14 +529,33 @@ function updateStatus(text) {
 }
 
 /**
- * 关闭面板
+ * 关闭面板并清理资源
  */
 function closePanel() {
     if (panelElement) {
+        // 移除事件委托处理器
+        const grid = panelElement.querySelector('.icons-grid');
+        if (grid && grid._iconClickHandler) {
+            grid.removeEventListener('click', grid._iconClickHandler);
+            grid._iconClickHandler = null;
+        }
+
+        // 移除面板 DOM
         panelElement.remove();
         panelElement = null;
     }
+
+    // 重置所有状态
     state.isOpen = false;
+    state.isLoading = false;
+    state.icons = [];
+    state.currentPage = 1;
+    state.selectedIcon = null;
+
+    // 如果在放置模式下关闭面板，退出放置模式
+    if (state.isPlacingMode) {
+        exitPlacingMode();
+    }
 }
 ```
 
@@ -513,39 +591,77 @@ function enterPlacingMode() {
     document.body.style.cursor = 'crosshair';
 
     // 显示提示
-    const tip = new Notice("点击画布位置插入图标 (按 ESC 取消)", 0);
+    const tip = new Notice("点击画布位置插入图标 (按 ESC 或右键取消)", 0);
+
+    // 获取画布容器
+    const view = ea.targetView;
+    if (!view || !view.containerEl) {
+        new Notice("无法获取画布引用");
+        return;
+    }
 
     // 清理函数
     const cleanup = () => {
-        document.removeEventListener('click', handleCanvasClick);
+        document.removeEventListener('click', handleCanvasClick, { capture: true });
         document.removeEventListener('keydown', handleEscape);
+        document.removeEventListener('contextmenu', handleContextMenu);
         document.body.style.cursor = '';
         tip.hide();
+        state.isPlacingMode = false;
+        state.selectedIcon = null;
     };
 
-    // 画布点击处理
+    // 画布点击处理 (使用 capture 阶段)
     const handleCanvasClick = async (e) => {
-        // 确保点击的是画布区域
-        const view = ea.targetView;
-        if (!view || !view.containerEl.contains(e.target)) return;
+        // 只响应左键点击
+        if (e.button !== 0) return;
+
+        // 确保点击的是画布区域内的实际画布元素
+        // 检查是否点击在 Excalidraw 的 canvas 或 svg 容器上
+        const excalidrawContainer = view.containerEl.querySelector('.excalidraw-container');
+        if (!excalidrawContainer || !excalidrawContainer.contains(e.target)) {
+            return;
+        }
+
+        // 阻止事件继续传播
+        e.stopPropagation();
+        e.stopImmediatePropagation();
 
         const point = getCanvasCoordinates(e);
         await insertIconToCanvas(point);
 
         cleanup();
-        state.isPlacingMode = false;
     };
 
     // ESC 取消处理
     const handleEscape = (e) => {
         if (e.key === 'Escape') {
+            e.preventDefault();
             cleanup();
-            state.isPlacingMode = false;
         }
     };
 
-    document.addEventListener('click', handleCanvasClick);
+    // 右键取消
+    const handleContextMenu = (e) => {
+        e.preventDefault();
+        cleanup();
+    };
+
+    // 使用 capture 阶段确保优先处理
+    document.addEventListener('click', handleCanvasClick, { capture: true });
     document.addEventListener('keydown', handleEscape);
+    document.addEventListener('contextmenu', handleContextMenu);
+
+    state.isPlacingMode = true;
+}
+
+/**
+ * 退出放置模式（供外部调用）
+ */
+function exitPlacingMode() {
+    // 触发一个模拟的 ESC 事件来执行清理
+    const escapeEvent = new KeyboardEvent('keydown', { key: 'Escape' });
+    document.dispatchEvent(escapeEvent);
 }
 
 /**
@@ -573,8 +689,11 @@ async function insertIconToCanvas(point) {
     const size = 32; // 32x32 像素
 
     try {
+        // 使用清理后的 SVG
+        const safeSvg = sanitizeSvg(icon.show_svg);
+
         // 使用 Excalidraw API 转换 SVG
-        const elements = await ea.svgToExcalidrawElements(icon.show_svg, {
+        const elements = await ea.svgToExcalidrawElements(safeSvg, {
             x: point.x - size / 2,
             y: point.y - size / 2,
             width: size,
@@ -583,12 +702,19 @@ async function insertIconToCanvas(point) {
             fillColor: 'transparent'
         });
 
+        if (!elements || elements.length === 0) {
+            throw new Error("SVG 转换失败");
+        }
+
         ea.elements = elements;
         await ea.addElementsToView(false, true, true);
         ea.selectElementsInView(ea.getElements());
 
+        new Notice("图标已插入");
+
     } catch (error) {
         new Notice(`插入图标失败: ${error.message}`);
+        console.error('Icon insertion error:', error);
     }
 }
 ```
