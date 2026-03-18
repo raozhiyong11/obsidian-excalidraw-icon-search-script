@@ -895,16 +895,16 @@ async function insertIconToCanvas(point) {
 
         try {
             // ============================================================================
-            // 步骤1: 计算图标显示大小（随画布缩放）
+            // 步骤1: 计算图标显示大小（在画布坐标系统中）
             // ============================================================================
-            const displaySize = 32; // 用户看到的图标大小（100%缩放时）
-            const iconSize = displaySize * point.zoom; // 实际存储的尺寸（随缩放）
+            const displaySize = 32; // 用户期望看到的图标大小（屏幕像素）
+            const iconSize = displaySize / point.zoom; // 画布坐标中的尺寸（随缩放调整）
 
             console.log("🟢 [SIZE] 计算图标尺寸:");
-            console.log("  - 用户期望尺寸 (100%):", displaySize, "px");
+            console.log("  - 用户期望尺寸 (屏幕):", displaySize, "px");
             console.log("  - 当前画布缩放:", point.zoom);
-            console.log("  - 实际存储尺寸:", iconSize.toFixed(2), "px");
-            console.log("  - 尺寸计算公式: 32 ×", point.zoom, "=", iconSize.toFixed(2));
+            console.log("  - 画布坐标尺寸:", iconSize.toFixed(2), "px");
+            console.log("  - 尺寸计算公式: 32 ÷", point.zoom, "=", iconSize.toFixed(2));
 
             // ============================================================================
             // 步骤2: 验证输入数据的有效性

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find . -type f -name *.ts -o -name *.js -o -name *.json)",
+      "mcp__zread__get_repo_structure",
+      "mcp__zread__read_file",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git init:*)",
+      "mcp__zai-mcp-server__analyze_image",
+      "Bash(find /y/develop_space/claude_code_workspace/obsidian-excalidraw-icon-search-plugin -name *report* -o -name *Report* -o -name *REPORT*)",
+      "Bash(find /y/develop_space/claude_code_workspace/obsidian-excalidraw-icon-search-plugin -name *.md -newer /y/develop_space/claude_code_workspace/obsidian-excalidraw-icon-search-plugin/docs/superpowers/plans/2026-03-18-icon-position-fix.md)"
+    ]
+  }
+}
