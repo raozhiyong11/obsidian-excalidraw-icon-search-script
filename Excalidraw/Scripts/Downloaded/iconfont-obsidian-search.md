@@ -41,6 +41,8 @@ const state = {
 let panelElement = null;         // 面板 DOM 元素
 let placingModeCleanup = null;   // 放置模式清理函数
 let searchDebounceTimer = null;  // 搜索防抖定时器
+let app = null;                  // Obsidian app 实例
+let vault = null;                // Obsidian vault 实例
 
 // ===== CSS 样式 =====
 const styleElement = document.createElement('style');
@@ -200,15 +202,21 @@ async function main() {
         return;
     }
 
-    // 2. 加载设置
+    // 2. 尝试获取 Obsidian API（可选）
+    app = ea.app;
+    if (app) {
+        vault = app.vault;
+    }
+
+    // 3. 加载设置
     loadSettings();
 
-    // 3. Cookie 检查
+    // 4. Cookie 检查
     if (!settings.yuqueCookie) {
         await promptForCookie();
     }
 
-    // 4. 打开搜索面板
+    // 5. 打开搜索面板
     openSearchPanel();
 }
 
@@ -233,26 +241,106 @@ function saveSettings() {
  * 提示用户输入 Cookie
  */
 async function promptForCookie() {
-    // 使用简单的 prompt 作为临时方案
-    // TODO: 后续可以改进为自定义模态框
-    const cookie = prompt(
-        "请输入语雀 Cookie\n\n" +
-        "获取方法:\n" +
-        "1. 在浏览器登录 https://www.yuque.com\n" +
-        "2. 按 F12 打开开发者工具\n" +
-        "3. 切换到 Application/应用 标签\n" +
-        "4. 左侧找到 Cookies → https://www.yuque.com\n" +
-        "5. 复制所有 Cookie 值（格式: name=value; name2=value2; ...）",
-        settings.yuqueCookie || ""
-    );
+    return new Promise((resolve) => {
+        // 创建模态对话框
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        `;
 
-    if (cookie && cookie.trim()) {
-        settings.yuqueCookie = cookie.trim();
-        saveSettings();
-        new Notice("Cookie 已保存");
-    } else if (!settings.yuqueCookie) {
-        new Notice("未配置 Cookie，搜索功能可能无法使用");
-    }
+        modal.innerHTML = `
+            <div style="
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 8px;
+                padding: 24px;
+                max-width: 600px;
+                width: 90%;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            ">
+                <h2 style="margin: 0 0 16px 0; color: var(--text-normal);">配置语雀 Cookie</h2>
+                <div style="color: var(--text-muted); font-size: 13px; line-height: 1.6; margin-bottom: 16px;">
+                    <p style="margin: 0 0 8px 0;"><strong>获取方法：</strong></p>
+                    <ol style="margin: 0; padding-left: 20px;">
+                        <li>在浏览器登录 <a href="https://www.yuque.com" target="_blank">https://www.yuque.com</a></li>
+                        <li>按 F12 打开开发者工具</li>
+                        <li>切换到 Application/应用 标签</li>
+                        <li>左侧找到 Cookies → https://www.yuque.com</li>
+                        <li>复制所有 Cookie 值（格式: name=value; name2=value2; ...）</li>
+                    </ol>
+                </div>
+                <textarea id="cookie-input" style="
+                    width: 100%;
+                    min-height: 100px;
+                    padding: 8px;
+                    border: 1px solid var(--background-modifier-border);
+                    border-radius: 4px;
+                    background: var(--background-primary);
+                    color: var(--text-normal);
+                    font-family: monospace;
+                    font-size: 12px;
+                    resize: vertical;
+                    margin-bottom: 16px;
+                " placeholder="粘贴 Cookie 内容...">${settings.yuqueCookie || ''}</textarea>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button id="cancel-btn" style="
+                        padding: 8px 16px;
+                        border: 1px solid var(--background-modifier-border);
+                        border-radius: 4px;
+                        background: var(--background-primary);
+                        color: var(--text-normal);
+                        cursor: pointer;
+                    ">取消</button>
+                    <button id="save-btn" style="
+                        padding: 8px 16px;
+                        border: none;
+                        border-radius: 4px;
+                        background: var(--interactive-accent);
+                        color: var(--text-on-accent);
+                        cursor: pointer;
+                    ">保存</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const textarea = modal.querySelector('#cookie-input');
+        const cancelBtn = modal.querySelector('#cancel-btn');
+        const saveBtn = modal.querySelector('#save-btn');
+
+        cancelBtn.addEventListener('click', () => {
+            modal.remove();
+            if (!settings.yuqueCookie) {
+                new Notice("未配置 Cookie，搜索功能可能无法使用");
+            }
+            resolve();
+        });
+
+        saveBtn.addEventListener('click', () => {
+            const cookie = textarea.value.trim();
+            if (cookie) {
+                settings.yuqueCookie = cookie;
+                saveSettings();
+                new Notice("Cookie 已保存");
+            } else if (!settings.yuqueCookie) {
+                new Notice("未配置 Cookie，搜索功能可能无法使用");
+            }
+            modal.remove();
+            resolve();
+        });
+
+        textarea.focus();
+    });
 }
 
 // ===== API 调用模块 =====
@@ -456,23 +544,22 @@ function closePanel() {
         searchDebounceTimer = null;
     }
 
-    // 重置所有状态
+    // 重置 UI 状态（保留放置模式相关的状态）
     state.isOpen = false;
     state.isLoading = false;
     state.icons = [];
     state.currentPage = 1;
-    state.selectedIcon = null;
 
-    // 如果在放置模式下关闭面板，退出放置模式
-    if (state.isPlacingMode) {
-        exitPlacingMode();
+    // 只有在没有进入放置模式时才重置 selectedIcon
+    if (!state.isPlacingMode) {
+        state.selectedIcon = null;
     }
 }
 
 /**
- * 清理 SVG 字符串（防止 XSS）
+ * 清理并优化 SVG 字符串
  * @param {string} svgString - 原始 SVG
- * @returns {string} 清理后的 SVG
+ * @returns {string} 优化后的 SVG
  */
 function sanitizeSvg(svgString) {
     // 创建临时 DOM 解析 SVG
@@ -495,7 +582,22 @@ function sanitizeSvg(svgString) {
         }
     });
 
-    return doc.documentElement.outerHTML;
+    const svgElement = doc.documentElement;
+
+    // 优化 SVG 以确保正确填充容器
+    // 设置或更新 viewBox 为 0 0 1024 1024（语雀图标的标准尺寸）
+    if (!svgElement.getAttribute('viewBox')) {
+        svgElement.setAttribute('viewBox', '0 0 1024 1024');
+    }
+
+    // 设置 width 和 height 为 100%，确保填充容器
+    svgElement.setAttribute('width', '100%');
+    svgElement.setAttribute('height', '100%');
+
+    // 添加 preserveAspectRatio 确保图标均匀缩放
+    svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+    return svgElement.outerHTML;
 }
 
 /**
@@ -661,16 +763,48 @@ function exitPlacingMode() {
 }
 
 /**
- * 获取画布坐标
+ * 获取画布坐标（简化版 - 只返回容器相对位置和缩放比例）
  * @param {MouseEvent} event - 鼠标事件
- * @returns {Object} 画布坐标 {x, y}
+ * @returns {Object} 包含容器相对位置 {x, y} 和缩放比例 zoom
  */
 function getCanvasCoordinates(event) {
     const view = ea.targetView;
-    const rect = view.containerEl.getBoundingClientRect();
+    const api = view.excalidrawAPI;
+
+    // 获取 Excalidraw 的完整状态
+    const appState = api.getAppState();
+    const zoom = appState.zoom.value;
+    const scrollX = appState.scrollX;
+    const scrollY = appState.scrollY;
+
+    // 获取 Excalidraw 容器的位置
+    const excalidrawContainer = view.containerEl.querySelector('.excalidraw-container');
+    if (!excalidrawContainer) {
+        console.warn("找不到 Excalidraw 容器");
+        return { x: event.clientX, y: event.clientY, zoom };
+    }
+
+    const rect = excalidrawContainer.getBoundingClientRect();
+
+    // 只需要容器相对位置（用于确定点击在屏幕上的相对位置）
+    const containerX = event.clientX - rect.left;
+    const containerY = event.clientY - rect.top;
+
+    console.log("=== 鼠标点击信息 ===");
+    console.log("容器相对位置:", { x: containerX.toFixed(2), y: containerY.toFixed(2) });
+    console.log("容器尺寸:", { width: rect.width, height: rect.height });
+    console.log("缩放比例:", zoom);
+    console.log("滚动偏移:", { x: scrollX.toFixed(2), y: scrollY.toFixed(2) });
+    console.log("====================");
+
     return {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
+        containerX,
+        containerY,
+        containerWidth: rect.width,
+        containerHeight: rect.height,
+        zoom,
+        scrollX,
+        scrollY
     };
 }
 
@@ -682,35 +816,370 @@ async function insertIconToCanvas(point) {
     const icon = state.selectedIcon;
     if (!icon) return;
 
-    const size = 32; // 32x32 像素
-
     try {
         // 使用清理后的 SVG
         const safeSvg = sanitizeSvg(icon.show_svg);
 
-        // 使用 Excalidraw API 转换 SVG
-        const elements = await ea.svgToExcalidrawElements(safeSvg, {
-            x: point.x - size / 2,
-            y: point.y - size / 2,
-            width: size,
-            height: size,
-            strokeColor: '#000000',
-            fillColor: 'transparent'
-        });
+        console.log("准备插入图标:", icon.name);
+        console.log("插入位置:", point);
 
-        if (!elements || elements.length === 0) {
-            throw new Error("SVG 转换失败");
+        // 获取 Excalidraw view 的 API
+        const view = ea.targetView;
+        const api = view.excalidrawAPI;
+
+        if (!api) {
+            throw new Error("无法获取 Excalidraw API");
         }
 
-        ea.elements = elements;
-        await ea.addElementsToView(false, true, true);
-        ea.selectElementsInView(ea.getElements());
+        // 获取 appState（用于坐标计算）
+        const appState = api.getAppState();
 
-        new Notice("图标已插入");
+        // 生成唯一的文件 ID（使用更简单的格式，便于重启后匹配）
+        const timestamp = Date.now();
+        const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        const fileId = `${SCRIPT_NAME}_${icon.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}_${randomId}`;
+
+        console.log("生成文件 ID:", fileId);
+
+        // 将 SVG 转换为 data URL（用于显示）
+        const base64Svg = btoa(unescape(encodeURIComponent(safeSvg)));
+        const dataUrl = `data:image/svg+xml;base64,${base64Svg}`;
+        console.log("Data URL 长度:", dataUrl.length);
+
+        // 获取当前文件系统
+        const files = api.getFiles();
+        console.log("注册前文件数量:", Object.keys(files).length);
+
+        // 创建新文件对象（与 Excalidraw 的文件结构一致）
+        const newFile = {
+            id: fileId,
+            mimeType: "image/svg+xml",
+            dataURL: dataUrl,
+            size: dataUrl.length,
+            created: timestamp,
+            // 添加这些字段以保持兼容性
+            lastRetrieved: timestamp
+        };
+
+        console.log("准备注册文件:", { id: newFile.id, mimeType: newFile.mimeType, size: newFile.size });
+
+        // 使用 Excalidraw 的 addFiles API 来注册文件
+        try {
+            if (typeof api.addFiles === 'function') {
+                console.log("使用 api.addFiles 注册文件");
+                api.addFiles({ [fileId]: newFile });
+            } else {
+                console.log("addFiles 不存在，直接修改 files 对象");
+                files[fileId] = newFile;
+            }
+        } catch (e) {
+            console.warn("api.addFiles 失败，使用直接修改:", e);
+            files[fileId] = newFile;
+        }
+
+        console.log("注册后文件数量:", Object.keys(api.getFiles()).length);
+        console.log("已注册文件 ID:", fileId);
+
+        // 获取当前画布中的元素
+        const existingElements = api.getSceneElements();
+        console.log("插入前元素数量:", existingElements.length);
+
+        // 生成唯一的元素 ID
+        const elementId = `${fileId}_el`;
+
+        // ============================================================================
+        // 开始图标插入坐标计算
+        // ============================================================================
+        console.log("🔵 [INSERT] ========== 开始图标插入流程 ==========");
+        console.log("🔵 [INSERT] 选中的图标:", state.selectedIcon?.name || "未找到");
+
+        try {
+            // ============================================================================
+            // 步骤1: 计算图标显示大小（随画布缩放）
+            // ============================================================================
+            const displaySize = 32; // 用户看到的图标大小（100%缩放时）
+            const iconSize = displaySize * point.zoom; // 实际存储的尺寸（随缩放）
+
+            console.log("🟢 [SIZE] 计算图标尺寸:");
+            console.log("  - 用户期望尺寸 (100%):", displaySize, "px");
+            console.log("  - 当前画布缩放:", point.zoom);
+            console.log("  - 实际存储尺寸:", iconSize.toFixed(2), "px");
+            console.log("  - 尺寸计算公式: 32 ×", point.zoom, "=", iconSize.toFixed(2));
+
+            // ============================================================================
+            // 步骤2: 验证输入数据的有效性
+            // ============================================================================
+            console.log("🔵 [VALIDATE] 验证输入数据:");
+            console.log("  - containerX:", point.containerX, "类型:", typeof point.containerX);
+            console.log("  - containerY:", point.containerY, "类型:", typeof point.containerY);
+            console.log("  - zoom:", point.zoom, "类型:", typeof point.zoom);
+            console.log("  - scrollX:", point.scrollX);
+            console.log("  - scrollY:", point.scrollY);
+
+            // 数据有效性检查
+            if (typeof point.containerX !== 'number' || typeof point.containerY !== 'number') {
+                throw new Error("containerX 或 containerY 不是有效数字");
+            }
+            if (typeof point.zoom !== 'number' || point.zoom <= 0) {
+                throw new Error("zoom 不是有效数字或 <= 0");
+            }
+            if (!isFinite(point.containerX) || !isFinite(point.containerY)) {
+                throw new Error("containerX 或 containerY 为无穷大");
+            }
+
+            // ============================================================================
+            // 步骤3: 计算安全的缩放比例（防止除以0或极端值）
+            // ============================================================================
+            const MIN_ZOOM = 0.01;  // 最小缩放：1%
+            const MAX_ZOOM = 100;   // 最大缩放：10000%
+            const safeZoom = Math.max(MIN_ZOOM, Math.min(point.zoom, MAX_ZOOM));
+
+            console.log("🟢 [ZOOM] 缩放比例处理:");
+            console.log("  - 原始 zoom:", point.zoom);
+            console.log("  - 安全 zoom:", safeZoom);
+            if (safeZoom !== point.zoom) {
+                console.log("  ⚠️  zoom 已被限制到安全范围 [" + MIN_ZOOM + ", " + MAX_ZOOM + "]");
+            }
+
+            // ============================================================================
+            // 步骤4: 计算鼠标点击位置对应的画布坐标（方案1：纯画布坐标法）
+            // ============================================================================
+            console.log("🔵 [COORD] 坐标转换开始（方案1：纯画布坐标法）");
+            console.log("  - 计算公式: canvasX = containerX / zoom");
+            console.log("  - containerX:", point.containerX);
+            console.log("  - 除以 safeZoom:", safeZoom);
+
+            const mouseCanvasX = point.containerX / safeZoom;
+            const mouseCanvasY = point.containerY / safeZoom;
+
+            console.log("🟢 [COORD] 鼠标画布坐标计算结果:");
+            console.log("  - mouseCanvasX:", mouseCanvasX.toFixed(2));
+            console.log("  - mouseCanvasY:", mouseCanvasY.toFixed(2));
+            console.log("  - 📐 说明: 这是鼠标点击位置在画布坐标系中的位置");
+
+            // 坐标有效性检查
+            if (!isFinite(mouseCanvasX) || !isFinite(mouseCanvasY)) {
+                console.error("🔴 [ERROR] 计算出的坐标无效!");
+                console.error("  - mouseCanvasX:", mouseCanvasX);
+                console.error("  - mouseCanvasY:", mouseCanvasY);
+                throw new Error("计算出的坐标无效，请检查画布状态");
+            }
+
+            // ============================================================================
+            // 步骤5: 计算图标左上角位置（使图标中心对齐鼠标）
+            // ============================================================================
+            const halfIconSize = iconSize / 2;
+            const iconX = mouseCanvasX - halfIconSize;
+            const iconY = mouseCanvasY - halfIconSize;
+
+            console.log("🟢 [POSITION] 图标位置计算:");
+            console.log("  - 图标中心对齐 → 需要减去图标尺寸的一半");
+            console.log("  - 图标尺寸:", iconSize.toFixed(2));
+            console.log("  - 半尺寸 (halfIconSize):", halfIconSize.toFixed(2));
+            console.log("  - iconX = mouseCanvasX - halfIconSize");
+            console.log("  - iconX =", mouseCanvasX.toFixed(2), "-", halfIconSize.toFixed(2), "=", iconX.toFixed(2));
+            console.log("  - iconY = mouseCanvasY - halfIconSize");
+            console.log("  - iconY =", mouseCanvasY.toFixed(2), "-", halfIconSize.toFixed(2), "=", iconY.toFixed(2));
+            console.log("  - 📍 图标左上角位置: (" + iconX.toFixed(2) + ", " + iconY.toFixed(2) + ")");
+
+            // ============================================================================
+            // 步骤6: 汇总信息
+            // ============================================================================
+            console.log("🔵 [SUMMARY] 图标插入信息汇总:");
+            console.log("┌────────────────────────────────────────────┐");
+            console.log("│  画布缩放: " + String(point.zoom.toFixed(2)).padStart(10) + " (" + (point.zoom * 100).toFixed(0) + "%)         │");
+            console.log("│  图标尺寸: " + String(iconSize.toFixed(2) + "px").padStart(10) + "                   │");
+            console.log("│  鼠标屏幕坐标: (" + point.containerX.toFixed(0) + ", " + point.containerY.toFixed(0) + ")              │");
+            console.log("│  鼠标画布坐标: (" + mouseCanvasX.toFixed(0) + ", " + mouseCanvasY.toFixed(0) + ")             │");
+            console.log("│  图标左上角: (" + iconX.toFixed(0) + ", " + iconY.toFixed(0) + ")                   │");
+            console.log("│  图标右下角: (" + (iconX + iconSize).toFixed(0) + ", " + (iconY + iconSize).toFixed(0) + ")           │");
+            console.log("│  图标中心点: (" + (iconX + halfIconSize).toFixed(0) + ", " + (iconY + halfIconSize).toFixed(0) + ")             │");
+            console.log("└────────────────────────────────────────────┘");
+
+            // ============================================================================
+            // 步骤7: 生成最终的图片元素
+            // ============================================================================
+            console.log("🔵 [ELEMENT] 创建图片元素:");
+
+            // 获取当前画布中的元素
+            const existingElements = api.getSceneElements();
+            const elementId = `${fileId}_el`;
+
+            // 创建完整的图片元素
+            const imageElement = {
+                id: elementId,
+                type: "image",
+                x: iconX,
+                y: iconY,
+                width: iconSize,
+                height: iconSize,
+                fileId: fileId,
+                status: "saved",
+                scale: [1, 1],
+                angle: 0,
+                strokeColor: "transparent",
+                backgroundColor: "transparent",
+                strokeWidth: 0,
+                strokeStyle: "solid",
+                roughness: 1,
+                opacity: 100,
+                groupIds: [],
+                frameId: null,
+                index: "a" + existingElements.length,
+                roundness: null,
+                seed: Math.floor(Math.random() * 100000),
+                version: 1,
+                versionNonce: Math.floor(Math.random() * 1000000),
+                isDeleted: false,
+                boundElements: null,
+                updated: timestamp,
+                link: null,
+                locked: false
+            };
+
+            console.log("  - 元素ID:", imageElement.id);
+            console.log("  - 元素类型:", imageElement.type);
+            console.log("  - 位置 (x, y):", imageElement.x.toFixed(2), imageElement.y.toFixed(2));
+            console.log("  - 尺寸 (w, h):", imageElement.width.toFixed(2), imageElement.height.toFixed(2));
+
+            // ============================================================================
+            // 步骤8: 插入到画布
+            // ============================================================================
+            console.log("🔵 [SCENE] 更新画布场景:");
+            console.log("  - 插入前元素数量:", existingElements.length);
+
+            // 使用 Excalidraw 原生 API 的 updateScene 方法
+            api.updateScene({
+              elements: [...existingElements, imageElement],
+              files: {
+                ...files,
+                [fileId]: newFile
+              }
+            });
+
+            const elementsAfter = api.getSceneElements();
+            console.log("  - 插入后元素数量:", elementsAfter.length);
+            console.log("  - 新增元素数量:", elementsAfter.length - existingElements.length);
+
+            // ============================================================================
+            // 步骤9: 验证插入结果
+            // ============================================================================
+            const addedElement = elementsAfter.find(el => el.id === elementId);
+            if (addedElement) {
+                console.log("✅ [SUCCESS] 图标插入成功!");
+                console.log("🟢 [VERIFY] 验证插入的元素:");
+                console.log("  - ID:", addedElement.id);
+                console.log("  - 位置:", { x: addedElement.x.toFixed(2), y: addedElement.y.toFixed(2) });
+                console.log("  - 尺寸:", { width: addedElement.width.toFixed(2), height: addedElement.height.toFixed(2) });
+                console.log("  - fileId:", addedElement.fileId);
+
+                // 检查位置是否与预期一致
+                const positionMatch = Math.abs(addedElement.x - iconX) < 0.01 && Math.abs(addedElement.y - iconY) < 0.01;
+                if (positionMatch) {
+                    console.log("  ✅ 位置验证通过：图标位置与计算值一致");
+                } else {
+                    console.warn("  ⚠️  位置警告：图标位置与计算值不完全一致");
+                    console.warn("    预期 x:", iconX, "实际 x:", addedElement.x);
+                    console.warn("    预期 y:", iconY, "实际 y:", addedElement.y);
+                }
+            } else {
+                console.error("🔴 [ERROR] 元素插入失败：在画布中找不到新插入的元素!");
+                throw new Error("元素插入验证失败");
+            }
+
+            // 选中新添加的元素
+            api.selectElements([imageElement]);
+
+            // 强制刷新画布
+            api.refresh();
+
+            console.log("🔵 [INSERT] ========== 图标插入流程完成 ==========");
+            new Notice(`图标已插入 (${iconSize.toFixed(0)}x${iconSize.toFixed(0)}) 在 (${iconX.toFixed(0)}, ${iconY.toFixed(0)})`);
+
+        } catch (error) {
+            // ============================================================================
+            // 错误处理
+            // ============================================================================
+            console.error("🔴 [ERROR] ========== 图标插入失败 ==========");
+            console.error("  错误类型:", error.name);
+            console.error("  错误消息:", error.message);
+            console.error("  错误堆栈:", error.stack);
+            console.error("🔴 [ERROR] 当前状态:");
+            console.error("  - point:", JSON.stringify(point, null, 2));
+            console.error("  - selectedIcon:", state.selectedIcon);
+            console.error("==========================================");
+
+            new Notice(`插入图标失败: ${error.message}`);
+        }
+
+        // 创建完整的图片元素
+        const imageElement = {
+            id: elementId,
+            type: "image",
+            x: iconX,
+            y: iconY,
+            width: iconSize,
+            height: iconSize,
+            fileId: fileId,
+            status: "saved",
+            scale: [1, 1],
+            angle: 0,
+            strokeColor: "transparent",
+            backgroundColor: "transparent",
+            strokeWidth: 0,
+            strokeStyle: "solid",
+            roughness: 1,
+            opacity: 100,
+            groupIds: [],
+            frameId: null,
+            index: "a" + existingElements.length,
+            roundness: null,
+            seed: Math.floor(Math.random() * 100000),
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000),
+            isDeleted: false,
+            boundElements: null,
+            updated: timestamp,
+            link: null,
+            locked: false
+        };
+
+        console.log("创建图片元素:", {
+            id: imageElement.id,
+            尺寸: iconSize,
+            位置: { x: imageElement.x.toFixed(2), y: imageElement.y.toFixed(2) },
+            fileId: fileId
+        });
+
+        // 使用 Excalidraw 原生 API 的 updateScene 方法
+        api.updateScene({
+          elements: [...existingElements, imageElement],
+          files: {
+            ...files,
+            [fileId]: newFile
+          }
+        });
+
+        console.log("插入后元素数量:", api.getSceneElements().length);
+
+        // 验证元素是否真的被添加了
+        const elementsAfter = api.getSceneElements();
+        const addedElement = elementsAfter.find(el => el.id === elementId);
+        console.log("添加的元素坐标:", addedElement ? { x: addedElement.x, y: addedElement.y, width: addedElement.width, height: addedElement.height } : "未找到");
+
+        // 选中新添加的元素
+        api.selectElements([imageElement]);
+
+        // 强制刷新画布
+        api.refresh();
+
+        console.log("图标已插入到画布");
+        new Notice(`图标已插入 (${iconSize}x${iconSize})`);
 
     } catch (error) {
         new Notice(`插入图标失败: ${error.message}`);
         console.error('Icon insertion error:', error);
+        console.error('Error stack:', error.stack);
     }
 }
 
@@ -747,3 +1216,12 @@ function escapeHtml(text) {
 
 // ===== 执行主函数 =====
 await main();
+
+// ===== 工具按钮入口 =====
+/**
+ * Excalidraw 工具按钮点击处理函数
+ * 当用户点击工具栏的图标按钮时调用
+ */
+function action() {
+    openSearchPanel();
+}
