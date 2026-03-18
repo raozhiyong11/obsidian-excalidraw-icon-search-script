@@ -86,7 +86,7 @@ y: point.containerY / point.zoom
 │                                                       │
 │  ┌─────────────────────────────────────────────┐   │
 │  │  步骤1: 计算图标尺寸                         │   │
-│  │  iconSize = 32 × zoom                        │   │
+│  │  iconSize = 32 ÷ zoom                        │   │
 │  └─────────────────────────────────────────────┘   │
 │                       │                              │
 │                       ▼                              │
@@ -158,17 +158,23 @@ const iconY = mouseCanvasY - (iconSize / 2);
 #### 图标尺寸计算
 
 ```javascript
-// 用户期望的显示尺寸（100%缩放时）
+// 用户期望的显示尺寸（屏幕像素）
 const displaySize = 32;
 
-// 实际存储的尺寸（随缩放调整）
-const iconSize = displaySize * zoom;
+// 画布坐标中的尺寸（随缩放调整）
+const iconSize = displaySize / zoom;
 ```
 
 **原理：**
 - Excalidraw 的元素尺寸是**画布坐标**中的值
-- 当 zoom > 1 时，图标存储更大的尺寸，但视觉上仍然是 32px
-- 当 zoom < 1 时，图标存储更小的尺寸，但视觉上仍然是 32px
+- 当 zoom > 1 时，图标存储更小的尺寸，以便放大后显示为 32px
+- 当 zoom < 1 时，图标存储更大的尺寸，以便缩小后显示为 32px
+- **公式修正：** 应使用除法 `/` 而非乘法 `*`
+
+**示例：**
+- zoom = 1: iconSize = 32 / 1 = 32，显示为 32px
+- zoom = 2: iconSize = 32 / 2 = 16，显示为 32px (16 × 2)
+- zoom = 0.5: iconSize = 32 / 0.5 = 64，显示为 32px (64 × 0.5)
 
 ---
 
