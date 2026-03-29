@@ -1,5 +1,5 @@
 /*
-![](data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8a3 3 0 0 0-3 3"/></svg>)
+![](data:image/svg+xml;base64,PHN2ZyB4bWxucz0nJ2h0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnJycgdmlld0JveD0nJzAgMCAyNCAyNCcnIGZpbGw9Jydub25lJycgc3Ryb2tlPScnY3VycmVudENvbG9yJycgc3Ryb2tlLXdpZHRoPScnMicnIHN0cm9rZS1saW5lY2FwPScncm91bmQnJyBzdHJva2UtbGluZWpvaW49Jydyb3VuZCcnPjxyZWN0IHg9JyczJycgeT0nJzUnJyB3aWR0aD0nJzE4JycgaGVpZ2h0PScnMTQnJyByeD0nJzInJy8+PGNpcmNsZSBjeD0nJzknJyBjeT0nJzEwJycgcj0nJzEuNScnLz48cGF0aCBkPScnTTIxIDE2bC01LjUtNS41TDcgMTknJy8+PC9zdmc+)
 
 语雀图标搜索 - 在 Excalidraw 中快速搜索语雀图标库并插入到画布
 
@@ -34,7 +34,8 @@ const state = {
 
     // 选中状态
     selectedIcon: null,     // 选中的图标数据
-    isPlacingMode: false    // 是否处于放置模式
+    isPlacingMode: false,   // 是否处于放置模式
+    isInsertingIcon: false  // 是否正在插入图标
 };
 
 // ===== 全局变量 =====
@@ -62,6 +63,7 @@ styleElement.textContent = `
     display: flex;
     flex-direction: column;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
 }
 
 /* ===== 面板头部 ===== */
@@ -73,6 +75,8 @@ styleElement.textContent = `
     align-items: center;
     background: var(--background-modifier-hover);
     border-radius: 8px 8px 0 0;
+    cursor: move;
+    user-select: none;
 }
 
 .panel-title {
@@ -101,8 +105,11 @@ styleElement.textContent = `
 /* ===== 面板主体 ===== */
 .panel-body {
     padding: 0;
-    overflow-y: auto;
+    overflow: hidden;
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 /* ===== 搜索输入框 ===== */
@@ -129,15 +136,17 @@ styleElement.textContent = `
     grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
     gap: 8px;
     padding: 0 16px 16px;
-    max-height: 350px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    align-content: start;
 }
 
 /* ===== 单个图标项 ===== */
 .icon-item {
     width: 32px;
     height: 32px;
-    padding: 8px;
+    padding: 4px;
     cursor: pointer;
     border-radius: 4px;
     transition: all 0.2s ease;
@@ -151,15 +160,62 @@ styleElement.textContent = `
 .icon-item:hover {
     background: var(--background-modifier-hover);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transform: scale(1.1);
     border-color: var(--background-modifier-border);
 }
 
+.icon-item.is-selected {
+    background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+}
+
 .icon-item svg {
-    width: 16px;
-    height: 16px;
+    width: 22px;
+    height: 22px;
     fill: currentColor;
     pointer-events: none;
+    flex-shrink: 0;
+}
+
+.icon-preview-overlay {
+    position: fixed;
+    width: 92px;
+    height: 92px;
+    padding: 0;
+    box-sizing: border-box;
+    border-radius: 16px;
+    border: 1px solid var(--background-modifier-border);
+    background: color-mix(in srgb, var(--background-primary) 82%, transparent);
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 10005;
+    opacity: 0;
+    transform: scale(0.94);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    backdrop-filter: blur(8px);
+}
+
+.icon-preview-overlay.is-visible {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.icon-preview-content {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform: scale(3);
+    transform-origin: center center;
+}
+
+.icon-preview-content svg {
+    width: 22px;
+    height: 22px;
 }
 
 /* ===== 状态文本 ===== */
@@ -191,6 +247,7 @@ styleElement.textContent = `
 .icons-grid::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
 `;
 document.head.appendChild(styleElement);
 
@@ -354,7 +411,6 @@ async function promptForCookie() {
  */
 async function searchIcons(query, page = 1, pageSize = 100) {
     if (!query || !query.trim()) return [];
-
     try {
         const response = await requestUrl({
             url: 'https://www.yuque.com/api/editor/iconfont',
@@ -389,6 +445,42 @@ async function searchIcons(query, page = 1, pageSize = 100) {
  * 处理 API 错误
  * @param {Error} error - 错误对象
  */
+// Override the earlier implementation because Obsidian requestUrl does not reliably apply a `query` option.
+async function searchIcons(query, page = 1, pageSize = 100) {
+    const normalizedQuery = (query || "").trim();
+    if (!normalizedQuery) return [];
+
+    const requestUrlWithParams = `https://www.yuque.com/api/editor/iconfont?${new URLSearchParams({
+        query: normalizedQuery,
+        page_size: String(pageSize),
+        page: String(page)
+    }).toString()}`;
+
+    try {
+        const response = await requestUrl({
+            url: requestUrlWithParams,
+            method: "GET",
+            headers: {
+                Cookie: settings.yuqueCookie,
+                "User-Agent": "Obsidian Excalidraw IconSearch/1.0"
+            }
+        });
+
+        if (response.status === 401) {
+            throw new Error("UNAUTHORIZED");
+        }
+
+        const data = response.json || {};
+        const icons = data && data.data && Array.isArray(data.data.icons) ? data.data.icons : [];
+
+        state.hasMore = icons.length === pageSize;
+        return icons;
+    } catch (error) {
+        handleApiError(error);
+        return [];
+    }
+}
+
 function handleApiError(error) {
     if (error.message === "UNAUTHORIZED") {
         new Notice("语雀 Cookie 失效了，请重新获取后更新配置，再继续使用。");
@@ -419,6 +511,11 @@ function openSearchPanel() {
 
     // 绑定事件
     bindPanelEvents();
+
+    if (state.icons && state.icons.length > 0) {
+        renderIcons(state.icons);
+        updateStatus("");
+    }
 }
 
 /**
@@ -430,7 +527,7 @@ function createPanelDOM() {
     panel.className = 'icon-search-panel';
     panel.innerHTML = `
         <div class="panel-header">
-            <span class="panel-title">语雀图标搜索</span>
+            <span class="panel-title">图标搜索</span>
             <button class="close-btn" title="关闭">×</button>
         </div>
         <div class="panel-body">
@@ -440,6 +537,57 @@ function createPanelDOM() {
         </div>
     `;
     return panel;
+}
+
+function bindPanelDragEvents() {
+    const header = panelElement && panelElement.querySelector('.panel-header');
+    if (!header || !panelElement) return;
+
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    const onMouseMove = (event) => {
+        if (!isDragging) return;
+
+        const nextLeft = startLeft + (event.clientX - startX);
+        const nextTop = startTop + (event.clientY - startY);
+        const maxLeft = Math.max(0, window.innerWidth - panelElement.offsetWidth);
+        const maxTop = Math.max(0, window.innerHeight - panelElement.offsetHeight);
+
+        panelElement.style.left = `${Math.min(Math.max(0, nextLeft), maxLeft)}px`;
+        panelElement.style.top = `${Math.min(Math.max(0, nextTop), maxTop)}px`;
+        panelElement.style.right = 'auto';
+    };
+
+    const stopDragging = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', stopDragging);
+    };
+
+    header.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest('.close-btn')) return;
+
+        const rect = panelElement.getBoundingClientRect();
+        isDragging = true;
+        startX = event.clientX;
+        startY = event.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        panelElement.style.left = `${rect.left}px`;
+        panelElement.style.top = `${rect.top}px`;
+        panelElement.style.right = 'auto';
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', stopDragging);
+        event.preventDefault();
+    });
 }
 
 /**
@@ -456,11 +604,17 @@ function bindPanelEvents() {
     });
 
     // 滚动加载更多
-    const panelBody = panelElement.querySelector('.panel-body');
-    panelBody.addEventListener('scroll', () => {
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        clearTimeout(searchDebounceTimer);
+        performSearch(e.target.value);
+    });
+
+    const grid = panelElement.querySelector('.icons-grid');
+    grid.addEventListener('scroll', () => {
         if (!state.isLoading && state.hasMore) {
-            const scrollBottom = panelBody.scrollTop + panelBody.clientHeight;
-            if (scrollBottom >= panelBody.scrollHeight - 50) {
+            const scrollBottom = grid.scrollTop + grid.clientHeight;
+            if (scrollBottom >= grid.scrollHeight - 50) {
                 loadMoreIcons();
             }
         }
@@ -468,6 +622,7 @@ function bindPanelEvents() {
 
     // 关闭按钮
     panelElement.querySelector('.close-btn').addEventListener('click', closePanel);
+    bindPanelDragEvents();
 }
 
 /**
@@ -525,6 +680,7 @@ function updateStatus(text) {
  * 关闭面板并清理资源
  */
 function closePanel() {
+    hideIconPreviewOverlay();
     if (panelElement) {
         // 移除事件委托处理器
         const grid = panelElement.querySelector('.icons-grid');
@@ -547,8 +703,6 @@ function closePanel() {
     // 重置 UI 状态（保留放置模式相关的状态）
     state.isOpen = false;
     state.isLoading = false;
-    state.icons = [];
-    state.currentPage = 1;
 
     // 只有在没有进入放置模式时才重置 selectedIcon
     if (!state.isPlacingMode) {
@@ -600,6 +754,47 @@ function sanitizeSvg(svgString) {
     return svgElement.outerHTML;
 }
 
+function ensureIconPreviewOverlay() {
+    let overlay = document.querySelector('.icon-preview-overlay');
+    if (overlay) return overlay;
+
+    overlay = document.createElement('div');
+    overlay.className = 'icon-preview-overlay';
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function hideIconPreviewOverlay() {
+    const overlay = document.querySelector('.icon-preview-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('is-visible');
+}
+
+function showIconPreviewOverlay(iconItem) {
+    if (!iconItem) return;
+
+    const overlay = ensureIconPreviewOverlay();
+    overlay.innerHTML = `<div class="icon-preview-content">${iconItem.innerHTML}</div>`;
+
+    const rect = iconItem.getBoundingClientRect();
+    const overlayWidth = 92;
+    const overlayHeight = 92;
+    const gap = 10;
+    const preferredLeft = rect.right + gap;
+    const fallbackLeft = rect.left - overlayWidth - gap;
+    const left = preferredLeft + overlayWidth <= window.innerWidth - 8
+        ? preferredLeft
+        : Math.max(8, fallbackLeft);
+    const top = Math.min(
+        Math.max(8, rect.top + rect.height / 2 - overlayHeight / 2),
+        window.innerHeight - overlayHeight - 8
+    );
+
+    overlay.style.left = `${left}px`;
+    overlay.style.top = `${top}px`;
+    overlay.classList.add('is-visible');
+}
+
 /**
  * 渲染图标到宫格
  * @param {Array} icons - 图标列表
@@ -607,7 +802,11 @@ function sanitizeSvg(svgString) {
  */
 function renderIcons(icons, append = false) {
     const grid = panelElement.querySelector('.icons-grid');
-    if (!grid) return;
+
+    if (!grid) {
+        console.error("[ERROR] .icons-grid element not found!");
+        return;
+    }
 
     if (!append) {
         grid.innerHTML = '';
@@ -619,14 +818,16 @@ function renderIcons(icons, append = false) {
     if (!grid._iconClickHandler) {
         grid._iconClickHandler = (e) => {
             const iconItem = e.target.closest('.icon-item');
+
             if (iconItem) {
                 const iconDataStr = iconItem.dataset.iconData;
+
                 if (iconDataStr) {
                     try {
                         const icon = JSON.parse(iconDataStr);
                         selectIcon(icon);
                     } catch (err) {
-                        console.error('Failed to parse icon data:', err);
+                        console.error('[ERROR] Failed to parse icon data:', err);
                     }
                 }
             }
@@ -645,21 +846,57 @@ function renderIcons(icons, append = false) {
         // 安全处理 SVG
         const safeSvg = sanitizeSvg(icon.show_svg);
         iconEl.innerHTML = safeSvg;
+        iconEl.addEventListener('mouseenter', () => showIconPreviewOverlay(iconEl));
+        iconEl.addEventListener('mouseleave', hideIconPreviewOverlay);
 
         iconEl.dataset.iconData = JSON.stringify(icon);
         fragment.appendChild(iconEl);
     });
 
     grid.appendChild(fragment);
+    highlightSelectedIcon(state.selectedIcon);
+}
+
+function highlightSelectedIcon(icon) {
+    if (!panelElement) return;
+
+    const grid = panelElement.querySelector('.icons-grid');
+    if (!grid) return;
+
+    grid.querySelectorAll('.icon-item.is-selected').forEach((element) => {
+        element.classList.remove('is-selected');
+    });
+
+    if (!icon) return;
+
+    const target = Array.from(grid.querySelectorAll('.icon-item')).find((element) => {
+        const iconDataStr = element.dataset.iconData;
+        if (!iconDataStr) return false;
+
+        try {
+            const parsed = JSON.parse(iconDataStr);
+            return parsed.id === icon.id;
+        } catch (error) {
+            return false;
+        }
+    });
+
+    if (target) {
+        target.classList.add('is-selected');
+    }
 }
 
 // ===== 图标选择与插入模块 =====
 
 /**
- * 选择图标，进入放置模式
+ * 选择图标，直接插入到屏幕中心
  * @param {Object} icon - 选中的图标
  */
-function selectIcon(icon) {
+async function selectIcon(icon) {
+    if (state.isInsertingIcon) {
+        return;
+    }
+
     // 保存搜索关键词
     const searchInput = panelElement.querySelector('.search-input');
     if (searchInput) {
@@ -667,20 +904,256 @@ function selectIcon(icon) {
         saveSettings();
     }
 
-    // 设置状态
     state.selectedIcon = icon;
-    state.isPlacingMode = true;
+    highlightSelectedIcon(icon);
+    state.isInsertingIcon = true;
 
-    // 关闭面板
-    closePanel();
+    // 保持面板打开，便于连续试多个图标
+    try {
+        await insertIconToScreenCenter(icon);
+    } finally {
+        state.isInsertingIcon = false;
+    }
+}
 
-    // 进入放置模式
-    enterPlacingMode();
+/**
+ * 将图标插入到屏幕可视区域中心
+ * @param {Object} icon - 要插入的图标对象
+ */
+async function legacyInsertIconToScreenCenter(icon) {
+    if (!icon) {
+        console.error("[INSERT] icon is empty");
+        return;
+    }
+
+    try {
+        // 使用清理后的 SVG
+        const safeSvg = sanitizeSvg(icon.show_svg);
+
+        // 获取 Excalidraw API
+        const view = ea.targetView;
+        const api = view.excalidrawAPI;
+
+        if (!api) {
+            throw new Error("无法获取 Excalidraw API");
+        }
+
+        const appState = api.getAppState();
+
+        // 生成唯一的文件 ID
+        const timestamp = Date.now();
+        const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        const fileId = `${SCRIPT_NAME}_${icon.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}_${randomId}`;
+
+        // 将 SVG 转换为 data URL
+        const base64Svg = btoa(unescape(encodeURIComponent(safeSvg)));
+        const dataUrl = `data:image/svg+xml;base64,${base64Svg}`;
+
+        // 获取当前文件系统
+        const files = api.getFiles();
+
+        // 创建新文件对象
+        const newFile = {
+            id: fileId,
+            mimeType: "image/svg+xml",
+            dataURL: dataUrl,
+            size: dataUrl.length,
+            created: timestamp,
+            lastRetrieved: timestamp
+        };
+
+        // 注册文件
+        if (typeof api.addFiles === 'function') {
+            api.addFiles({ [fileId]: newFile });
+        } else {
+            files[fileId] = newFile;
+        }
+
+        // 获取现有元素
+        const existingElements = api.getSceneElements();
+
+        // 计算图标位置（使用现有元素作为参考）
+        const displaySize = 32; // 用户看到的显示大小
+        const zoom = appState.zoom.value;
+        const iconSize = displaySize / zoom;
+
+        let iconX, iconY;
+
+        if (existingElements.length > 0) {
+            // 使用最后一个元素的位置作为基准
+            const lastElement = existingElements[existingElements.length - 1];
+            iconX = lastElement.x;
+            iconY = lastElement.y + lastElement.height + 50; // 在最后一个元素下方50px
+        } else {
+            // 空画布：使用画布原点附近
+            iconX = 100;
+            iconY = 100;
+        }
+
+        // 创建图片元素
+        const elementId = `${fileId}_el`;
+        const imageElement = {
+            id: elementId,
+            type: "image",
+            x: iconX,
+            y: iconY,
+            width: iconSize,
+            height: iconSize,
+            fileId: fileId,
+            status: "saved",
+            scale: [1, 1],
+            angle: 0,
+            strokeColor: "transparent",
+            backgroundColor: "transparent",
+            strokeWidth: 0,
+            strokeStyle: "solid",
+            roughness: 1,
+            opacity: 100,
+            groupIds: [],
+            frameId: null,
+            index: "a" + existingElements.length,
+            roundness: null,
+            seed: Math.floor(Math.random() * 100000),
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000),
+            isDeleted: false,
+            boundElements: null,
+            updated: timestamp,
+            link: null,
+            locked: false
+        };
+
+        // 插入到画布
+        api.updateScene({
+            elements: [...existingElements, imageElement],
+            files: { ...files, [fileId]: newFile }
+        });
+
+        // 选中新添加的元素
+        api.selectElements([imageElement]);
+
+        // 强制刷新画布
+        api.refresh();
+
+        new Notice(`图标 "${icon.name}" 已插入到屏幕中心`);
+
+    } catch (error) {
+        console.error("[INSERT] failed:", error);
+        new Notice(`插入图标失败: ${error.message}`);
+    }
 }
 
 /**
  * 进入放置模式
  */
+// Override the earlier implementation so insertion always targets the visible viewport center.
+async function insertIconToScreenCenter(icon) {
+    if (!icon) {
+        console.error("[INSERT] icon is empty");
+        return;
+    }
+
+    try {
+        const safeSvg = sanitizeSvg(icon.show_svg);
+        const view = ea.targetView;
+        const api = view && view.excalidrawAPI;
+
+        if (!api) {
+            throw new Error("Failed to get Excalidraw API");
+        }
+
+        const appState = api.getAppState();
+        const timestamp = Date.now();
+        const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+        const fileId = `${SCRIPT_NAME}_${icon.name.replace(/[^a-zA-Z0-9]/g, "_")}_${timestamp}_${randomId}`;
+        const base64Svg = btoa(unescape(encodeURIComponent(safeSvg)));
+        const dataUrl = `data:image/svg+xml;base64,${base64Svg}`;
+        const files = api.getFiles();
+
+        const newFile = {
+            id: fileId,
+            mimeType: "image/svg+xml",
+            dataURL: dataUrl,
+            size: dataUrl.length,
+            created: timestamp,
+            lastRetrieved: timestamp
+        };
+
+        if (typeof api.addFiles === "function") {
+            api.addFiles({ [fileId]: newFile });
+        } else {
+            files[fileId] = newFile;
+        }
+
+        const existingElements = api.getSceneElements();
+        const displaySize = 32;
+        const zoom = (appState.zoom && appState.zoom.value) || 1;
+        const iconSize = displaySize / zoom;
+        const container = (view.containerEl && view.containerEl.querySelector && view.containerEl.querySelector(".excalidraw")) || view.containerEl;
+        const rect = container && container.getBoundingClientRect ? container.getBoundingClientRect() : null;
+
+        let viewportCenterX;
+        let viewportCenterY;
+
+        if (rect) {
+            // Excalidraw transform: viewport = scene * zoom + scroll
+            viewportCenterX = (rect.width / 2 - appState.scrollX) / zoom;
+            viewportCenterY = (rect.height / 2 - appState.scrollY) / zoom;
+        } else {
+            viewportCenterX = -appState.scrollX / zoom;
+            viewportCenterY = -appState.scrollY / zoom;
+        }
+
+        const iconX = viewportCenterX - iconSize / 2;
+        const iconY = viewportCenterY - iconSize / 2;
+
+        const elementId = `${fileId}_el`;
+        const imageElement = {
+            id: elementId,
+            type: "image",
+            x: iconX,
+            y: iconY,
+            width: iconSize,
+            height: iconSize,
+            fileId: fileId,
+            status: "saved",
+            scale: [1, 1],
+            angle: 0,
+            strokeColor: "transparent",
+            backgroundColor: "transparent",
+            strokeWidth: 0,
+            strokeStyle: "solid",
+            roughness: 1,
+            opacity: 100,
+            groupIds: [],
+            frameId: null,
+            index: "a" + existingElements.length,
+            roundness: null,
+            seed: Math.floor(Math.random() * 100000),
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1000000),
+            isDeleted: false,
+            boundElements: null,
+            updated: timestamp,
+            link: null,
+            locked: false
+        };
+
+        api.updateScene({
+            elements: [...existingElements, imageElement],
+            files: { ...files, [fileId]: newFile }
+        });
+
+        api.selectElements([imageElement]);
+        api.refresh();
+
+        new Notice(`Icon "${icon.name}" inserted at viewport center`);
+    } catch (error) {
+        console.error("[INSERT] failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+    }
+}
+
 function enterPlacingMode() {
     // 更改鼠标样式
     document.body.style.cursor = 'crosshair';
@@ -790,13 +1263,6 @@ function getCanvasCoordinates(event) {
     const containerX = event.clientX - rect.left;
     const containerY = event.clientY - rect.top;
 
-    console.log("=== 鼠标点击信息 ===");
-    console.log("容器相对位置:", { x: containerX.toFixed(2), y: containerY.toFixed(2) });
-    console.log("容器尺寸:", { width: rect.width, height: rect.height });
-    console.log("缩放比例:", zoom);
-    console.log("滚动偏移:", { x: scrollX.toFixed(2), y: scrollY.toFixed(2) });
-    console.log("====================");
-
     return {
         containerX,
         containerY,
@@ -820,9 +1286,6 @@ async function insertIconToCanvas(point) {
         // 使用清理后的 SVG
         const safeSvg = sanitizeSvg(icon.show_svg);
 
-        console.log("准备插入图标:", icon.name);
-        console.log("插入位置:", point);
-
         // 获取 Excalidraw view 的 API
         const view = ea.targetView;
         const api = view.excalidrawAPI;
@@ -839,16 +1302,12 @@ async function insertIconToCanvas(point) {
         const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
         const fileId = `${SCRIPT_NAME}_${icon.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}_${randomId}`;
 
-        console.log("生成文件 ID:", fileId);
-
         // 将 SVG 转换为 data URL（用于显示）
         const base64Svg = btoa(unescape(encodeURIComponent(safeSvg)));
         const dataUrl = `data:image/svg+xml;base64,${base64Svg}`;
-        console.log("Data URL 长度:", dataUrl.length);
 
         // 获取当前文件系统
         const files = api.getFiles();
-        console.log("注册前文件数量:", Object.keys(files).length);
 
         // 创建新文件对象（与 Excalidraw 的文件结构一致）
         const newFile = {
@@ -861,148 +1320,45 @@ async function insertIconToCanvas(point) {
             lastRetrieved: timestamp
         };
 
-        console.log("准备注册文件:", { id: newFile.id, mimeType: newFile.mimeType, size: newFile.size });
-
         // 使用 Excalidraw 的 addFiles API 来注册文件
         try {
             if (typeof api.addFiles === 'function') {
-                console.log("使用 api.addFiles 注册文件");
                 api.addFiles({ [fileId]: newFile });
             } else {
-                console.log("addFiles 不存在，直接修改 files 对象");
                 files[fileId] = newFile;
             }
         } catch (e) {
-            console.warn("api.addFiles 失败，使用直接修改:", e);
+            console.warn("api.addFiles failed, using direct modification:", e);
             files[fileId] = newFile;
         }
 
-        console.log("注册后文件数量:", Object.keys(api.getFiles()).length);
-        console.log("已注册文件 ID:", fileId);
-
         // 获取当前画布中的元素
         const existingElements = api.getSceneElements();
-        console.log("插入前元素数量:", existingElements.length);
-
-        // 生成唯一的元素 ID
-        const elementId = `${fileId}_el`;
 
         // ============================================================================
         // 开始图标插入坐标计算
         // ============================================================================
-        console.log("🔵 [INSERT] ========== 开始图标插入流程 ==========");
-        console.log("🔵 [INSERT] 选中的图标:", state.selectedIcon?.name || "未找到");
-
         try {
             // ============================================================================
-            // 步骤1: 计算图标显示大小（在画布坐标系统中）
+            // 步骤1: 计算图标大小（固定32px）
             // ============================================================================
-            const displaySize = 32; // 用户期望看到的图标大小（屏幕像素）
-            const iconSize = displaySize / point.zoom; // 画布坐标中的尺寸（随缩放调整）
-
-            console.log("🟢 [SIZE] 计算图标尺寸:");
-            console.log("  - 用户期望尺寸 (屏幕):", displaySize, "px");
-            console.log("  - 当前画布缩放:", point.zoom);
-            console.log("  - 画布坐标尺寸:", iconSize.toFixed(2), "px");
-            console.log("  - 尺寸计算公式: 32 ÷", point.zoom, "=", iconSize.toFixed(2));
+            const iconSize = 32; // 固定图标大小
 
             // ============================================================================
-            // 步骤2: 验证输入数据的有效性
+            // 步骤2: 获取当前视口中心坐标
             // ============================================================================
-            console.log("🔵 [VALIDATE] 验证输入数据:");
-            console.log("  - containerX:", point.containerX, "类型:", typeof point.containerX);
-            console.log("  - containerY:", point.containerY, "类型:", typeof point.containerY);
-            console.log("  - zoom:", point.zoom, "类型:", typeof point.zoom);
-            console.log("  - scrollX:", point.scrollX);
-            console.log("  - scrollY:", point.scrollY);
-
-            // 数据有效性检查
-            if (typeof point.containerX !== 'number' || typeof point.containerY !== 'number') {
-                throw new Error("containerX 或 containerY 不是有效数字");
-            }
-            if (typeof point.zoom !== 'number' || point.zoom <= 0) {
-                throw new Error("zoom 不是有效数字或 <= 0");
-            }
-            if (!isFinite(point.containerX) || !isFinite(point.containerY)) {
-                throw new Error("containerX 或 containerY 为无穷大");
-            }
+            // Excalidraw 的 scrollX/scrollY 就是当前视口中心的画布坐标
+            const centerX = appState.scrollX;
+            const centerY = appState.scrollY;
 
             // ============================================================================
-            // 步骤3: 计算安全的缩放比例（防止除以0或极端值）
-            // ============================================================================
-            const MIN_ZOOM = 0.01;  // 最小缩放：1%
-            const MAX_ZOOM = 100;   // 最大缩放：10000%
-            const safeZoom = Math.max(MIN_ZOOM, Math.min(point.zoom, MAX_ZOOM));
-
-            console.log("🟢 [ZOOM] 缩放比例处理:");
-            console.log("  - 原始 zoom:", point.zoom);
-            console.log("  - 安全 zoom:", safeZoom);
-            if (safeZoom !== point.zoom) {
-                console.log("  ⚠️  zoom 已被限制到安全范围 [" + MIN_ZOOM + ", " + MAX_ZOOM + "]");
-            }
-
-            // ============================================================================
-            // 步骤4: 计算鼠标点击位置对应的画布坐标（方案1：纯画布坐标法）
-            // ============================================================================
-            console.log("🔵 [COORD] 坐标转换开始（方案1：纯画布坐标法）");
-            console.log("  - 计算公式: canvasX = containerX / zoom");
-            console.log("  - containerX:", point.containerX);
-            console.log("  - 除以 safeZoom:", safeZoom);
-
-            const mouseCanvasX = point.containerX / safeZoom;
-            const mouseCanvasY = point.containerY / safeZoom;
-
-            console.log("🟢 [COORD] 鼠标画布坐标计算结果:");
-            console.log("  - mouseCanvasX:", mouseCanvasX.toFixed(2));
-            console.log("  - mouseCanvasY:", mouseCanvasY.toFixed(2));
-            console.log("  - 📐 说明: 这是鼠标点击位置在画布坐标系中的位置");
-
-            // 坐标有效性检查
-            if (!isFinite(mouseCanvasX) || !isFinite(mouseCanvasY)) {
-                console.error("🔴 [ERROR] 计算出的坐标无效!");
-                console.error("  - mouseCanvasX:", mouseCanvasX);
-                console.error("  - mouseCanvasY:", mouseCanvasY);
-                throw new Error("计算出的坐标无效，请检查画布状态");
-            }
-
-            // ============================================================================
-            // 步骤5: 计算图标左上角位置（使图标中心对齐鼠标）
+            // 步骤3: 计算图标位置（使图标中心对齐视口中心）
             // ============================================================================
             const halfIconSize = iconSize / 2;
-            const iconX = mouseCanvasX - halfIconSize;
-            const iconY = mouseCanvasY - halfIconSize;
+            const iconX = centerX - halfIconSize;
+            const iconY = centerY - halfIconSize;
 
-            console.log("🟢 [POSITION] 图标位置计算:");
-            console.log("  - 图标中心对齐 → 需要减去图标尺寸的一半");
-            console.log("  - 图标尺寸:", iconSize.toFixed(2));
-            console.log("  - 半尺寸 (halfIconSize):", halfIconSize.toFixed(2));
-            console.log("  - iconX = mouseCanvasX - halfIconSize");
-            console.log("  - iconX =", mouseCanvasX.toFixed(2), "-", halfIconSize.toFixed(2), "=", iconX.toFixed(2));
-            console.log("  - iconY = mouseCanvasY - halfIconSize");
-            console.log("  - iconY =", mouseCanvasY.toFixed(2), "-", halfIconSize.toFixed(2), "=", iconY.toFixed(2));
-            console.log("  - 📍 图标左上角位置: (" + iconX.toFixed(2) + ", " + iconY.toFixed(2) + ")");
-
-            // ============================================================================
-            // 步骤6: 汇总信息
-            // ============================================================================
-            console.log("🔵 [SUMMARY] 图标插入信息汇总:");
-            console.log("┌────────────────────────────────────────────┐");
-            console.log("│  画布缩放: " + String(point.zoom.toFixed(2)).padStart(10) + " (" + (point.zoom * 100).toFixed(0) + "%)         │");
-            console.log("│  图标尺寸: " + String(iconSize.toFixed(2) + "px").padStart(10) + "                   │");
-            console.log("│  鼠标屏幕坐标: (" + point.containerX.toFixed(0) + ", " + point.containerY.toFixed(0) + ")              │");
-            console.log("│  鼠标画布坐标: (" + mouseCanvasX.toFixed(0) + ", " + mouseCanvasY.toFixed(0) + ")             │");
-            console.log("│  图标左上角: (" + iconX.toFixed(0) + ", " + iconY.toFixed(0) + ")                   │");
-            console.log("│  图标右下角: (" + (iconX + iconSize).toFixed(0) + ", " + (iconY + iconSize).toFixed(0) + ")           │");
-            console.log("│  图标中心点: (" + (iconX + halfIconSize).toFixed(0) + ", " + (iconY + halfIconSize).toFixed(0) + ")             │");
-            console.log("└────────────────────────────────────────────┘");
-
-            // ============================================================================
-            // 步骤7: 生成最终的图片元素
-            // ============================================================================
-            console.log("🔵 [ELEMENT] 创建图片元素:");
-
-            // 获取当前画布中的元素
-            const existingElements = api.getSceneElements();
+            // 生成唯一的元素 ID
             const elementId = `${fileId}_el`;
 
             // 创建完整的图片元素
@@ -1037,17 +1393,6 @@ async function insertIconToCanvas(point) {
                 locked: false
             };
 
-            console.log("  - 元素ID:", imageElement.id);
-            console.log("  - 元素类型:", imageElement.type);
-            console.log("  - 位置 (x, y):", imageElement.x.toFixed(2), imageElement.y.toFixed(2));
-            console.log("  - 尺寸 (w, h):", imageElement.width.toFixed(2), imageElement.height.toFixed(2));
-
-            // ============================================================================
-            // 步骤8: 插入到画布
-            // ============================================================================
-            console.log("🔵 [SCENE] 更新画布场景:");
-            console.log("  - 插入前元素数量:", existingElements.length);
-
             // 使用 Excalidraw 原生 API 的 updateScene 方法
             api.updateScene({
               elements: [...existingElements, imageElement],
@@ -1057,61 +1402,20 @@ async function insertIconToCanvas(point) {
               }
             });
 
-            const elementsAfter = api.getSceneElements();
-            console.log("  - 插入后元素数量:", elementsAfter.length);
-            console.log("  - 新增元素数量:", elementsAfter.length - existingElements.length);
-
-            // ============================================================================
-            // 步骤9: 验证插入结果
-            // ============================================================================
-            const addedElement = elementsAfter.find(el => el.id === elementId);
-            if (addedElement) {
-                console.log("✅ [SUCCESS] 图标插入成功!");
-                console.log("🟢 [VERIFY] 验证插入的元素:");
-                console.log("  - ID:", addedElement.id);
-                console.log("  - 位置:", { x: addedElement.x.toFixed(2), y: addedElement.y.toFixed(2) });
-                console.log("  - 尺寸:", { width: addedElement.width.toFixed(2), height: addedElement.height.toFixed(2) });
-                console.log("  - fileId:", addedElement.fileId);
-
-                // 检查位置是否与预期一致
-                const positionMatch = Math.abs(addedElement.x - iconX) < 0.01 && Math.abs(addedElement.y - iconY) < 0.01;
-                if (positionMatch) {
-                    console.log("  ✅ 位置验证通过：图标位置与计算值一致");
-                } else {
-                    console.warn("  ⚠️  位置警告：图标位置与计算值不完全一致");
-                    console.warn("    预期 x:", iconX, "实际 x:", addedElement.x);
-                    console.warn("    预期 y:", iconY, "实际 y:", addedElement.y);
-                }
-            } else {
-                console.error("🔴 [ERROR] 元素插入失败：在画布中找不到新插入的元素!");
-                throw new Error("元素插入验证失败");
-            }
-
             // 选中新添加的元素
             api.selectElements([imageElement]);
 
             // 强制刷新画布
             api.refresh();
 
-            console.log("🔵 [INSERT] ========== 图标插入流程完成 ==========");
             new Notice(`图标已插入 (${iconSize.toFixed(0)}x${iconSize.toFixed(0)}) 在 (${iconX.toFixed(0)}, ${iconY.toFixed(0)})`);
 
         } catch (error) {
-            // ============================================================================
-            // 错误处理
-            // ============================================================================
-            console.error("🔴 [ERROR] ========== 图标插入失败 ==========");
-            console.error("  错误类型:", error.name);
-            console.error("  错误消息:", error.message);
-            console.error("  错误堆栈:", error.stack);
-            console.error("🔴 [ERROR] 当前状态:");
-            console.error("  - point:", JSON.stringify(point, null, 2));
-            console.error("  - selectedIcon:", state.selectedIcon);
-            console.error("==========================================");
-
+            console.error("[ERROR] Icon insertion failed:", error);
             new Notice(`插入图标失败: ${error.message}`);
         }
     } catch (error) {
+        console.error("[ERROR] Icon insertion failed (outer):", error);
         new Notice(`插入图标失败: ${error.message}`);
         console.error('Icon insertion error:', error);
         console.error('Error stack:', error.stack);
@@ -1150,6 +1454,335 @@ function escapeHtml(text) {
 }
 
 // ===== 执行主函数 =====
+function formatAttachmentTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    const pad = (value) => String(value).padStart(2, "0");
+    return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate())
+    ].join("") + [
+        pad(date.getHours()),
+        pad(date.getMinutes()),
+        pad(date.getSeconds())
+    ].join("");
+}
+
+async function waitForNextFrame() {
+    await new Promise((resolve) => {
+        if (typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(() => resolve());
+            return;
+        }
+
+        setTimeout(resolve, 16);
+    });
+}
+
+async function forceImageElementRerender(api, elementId, files) {
+    await waitForNextFrame();
+    await waitForNextFrame();
+
+    const sceneElements = api.getSceneElements();
+    const targetElement = sceneElements.find((element) => element.id === elementId);
+    if (!targetElement) {
+        return null;
+    }
+
+    const rerenderedElement = {
+        ...targetElement,
+        version: (targetElement.version || 1) + 1,
+        versionNonce: Math.floor(Math.random() * 1000000),
+        updated: Date.now()
+    };
+
+    api.updateScene({
+        elements: sceneElements.map((element) => element.id === rerenderedElement.id ? rerenderedElement : element),
+        files: files || api.getFiles()
+    });
+    api.refresh();
+
+    return rerenderedElement;
+}
+
+async function insertPersistentSvgIcon(icon, x, y, size) {
+    const view = ea.targetView;
+    const api = view && view.excalidrawAPI;
+    const obsidianApp = app || ea.app;
+    const obsidianVault = vault || (obsidianApp && obsidianApp.vault);
+
+    if (!api) {
+        throw new Error("Failed to get Excalidraw API");
+    }
+
+    if (!obsidianVault) {
+        throw new Error("Failed to get Obsidian vault");
+    }
+
+    if (typeof ea.getAttachmentFilepath !== "function" || typeof ea.addImage !== "function") {
+        throw new Error("Current Excalidraw Automate version does not support persistent image insertion");
+    }
+
+    const safeSvg = sanitizeSvg(icon.show_svg);
+    const timestamp = Date.now();
+    const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const attachmentName = `Pasted Image ${formatAttachmentTimestamp(timestamp)}_${randomId}.svg`;
+    const attachmentPath = await ea.getAttachmentFilepath(attachmentName);
+    const normalizedAttachmentPath = attachmentPath.replace(/\\/g, "/");
+    const lastSlashIndex = normalizedAttachmentPath.lastIndexOf("/");
+    const folderPath = lastSlashIndex >= 0 ? normalizedAttachmentPath.substring(0, lastSlashIndex) : "";
+
+    if (folderPath) {
+        try {
+            await obsidianVault.adapter.mkdir(folderPath);
+        } catch (error) {
+            // Folder may already exist.
+        }
+    }
+
+    const existingAttachment = obsidianVault.getAbstractFileByPath(normalizedAttachmentPath);
+    if (existingAttachment && typeof obsidianVault.modify === "function") {
+        await obsidianVault.modify(existingAttachment, safeSvg);
+    } else {
+        await obsidianVault.create(normalizedAttachmentPath, safeSvg);
+    }
+
+    const beforeSceneElements = api.getSceneElements();
+    const beforeElementIds = new Set(beforeSceneElements.map((element) => element.id));
+    const beforeImageFileIds = new Set(
+        beforeSceneElements
+            .filter((element) => element.type === "image" && element.fileId)
+            .map((element) => element.fileId)
+    );
+    const insertedElementId = await ea.addImage(x, y, normalizedAttachmentPath, false, false);
+
+    if (typeof ea.addElementsToView === "function") {
+        await ea.addElementsToView(false, true, true);
+    }
+
+    const sceneElements = api.getSceneElements();
+    const insertedElement =
+        sceneElements.find((element) => element.id === insertedElementId) ||
+        sceneElements.find((element) => element.type === "image" && !beforeElementIds.has(element.id));
+
+    if (!insertedElement) {
+        throw new Error("Image element was not added to the scene");
+    }
+
+    const resizedElement = {
+        ...insertedElement,
+        x,
+        y,
+        width: size,
+        height: size,
+        version: (insertedElement.version || 1) + 1,
+        versionNonce: Math.floor(Math.random() * 1000000),
+        updated: Date.now()
+    };
+
+    api.updateScene({
+        elements: sceneElements.map((element) => element.id === resizedElement.id ? resizedElement : element)
+    });
+
+    api.selectElements([resizedElement]);
+    api.refresh();
+
+    return {
+        attachmentPath: normalizedAttachmentPath,
+        element: resizedElement
+    };
+}
+
+// Override the earlier implementation to persist SVGs as real Excalidraw attachments.
+async function insertIconToScreenCenter(icon) {
+    if (!icon) {
+        console.error("[INSERT] icon is empty");
+        return;
+    }
+
+    try {
+        const view = ea.targetView;
+        const api = view && view.excalidrawAPI;
+
+        if (!api) {
+            throw new Error("Failed to get Excalidraw API");
+        }
+
+        const appState = api.getAppState();
+        const zoom = (appState.zoom && appState.zoom.value) || 1;
+        const iconSize = 32 / zoom;
+        const container = (view.containerEl && view.containerEl.querySelector && view.containerEl.querySelector(".excalidraw")) || view.containerEl;
+        const rect = container && container.getBoundingClientRect ? container.getBoundingClientRect() : null;
+
+        let viewportCenterX;
+        let viewportCenterY;
+
+        if (rect) {
+            viewportCenterX = (rect.width / 2 - appState.scrollX) / zoom;
+            viewportCenterY = (rect.height / 2 - appState.scrollY) / zoom;
+        } else {
+            viewportCenterX = -appState.scrollX / zoom;
+            viewportCenterY = -appState.scrollY / zoom;
+        }
+
+        const iconX = viewportCenterX - iconSize / 2;
+        const iconY = viewportCenterY - iconSize / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+
+        new Notice(`Icon "${icon.name}" inserted at viewport center`);
+    } catch (error) {
+        console.error("[INSERT] failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+    }
+}
+
+// Override the earlier canvas-placement implementation to persist SVGs as real attachments.
+async function insertIconToCanvas(point) {
+    const icon = state.selectedIcon;
+    if (!icon) return;
+
+    try {
+        const view = ea.targetView;
+        const api = view && view.excalidrawAPI;
+
+        if (!api) {
+            throw new Error("Failed to get Excalidraw API");
+        }
+
+        const iconSize = 32;
+        const centerX = point && typeof point.scrollX === "number" ? point.scrollX : api.getAppState().scrollX;
+        const centerY = point && typeof point.scrollY === "number" ? point.scrollY : api.getAppState().scrollY;
+        const iconX = centerX - iconSize / 2;
+        const iconY = centerY - iconSize / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+
+        new Notice(`Icon "${icon.name}" inserted`);
+    } catch (error) {
+        console.error("[INSERT] canvas placement failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+    }
+}
+
+function getObsidianAppAndVault() {
+    const view = ea && ea.targetView;
+    const candidateApps = [
+        app,
+        ea && ea.app,
+        view && view.app,
+        typeof globalThis !== "undefined" ? globalThis.app : null,
+        typeof window !== "undefined" ? window.app : null
+    ].filter(Boolean);
+
+    for (const candidateApp of candidateApps) {
+        if (candidateApp && candidateApp.vault) {
+            return {
+                app: candidateApp,
+                vault: candidateApp.vault
+            };
+        }
+    }
+
+    return {
+        app: candidateApps[0] || null,
+        vault: null
+    };
+}
+
+async function insertPersistentSvgIcon(icon, x, y, size) {
+    const view = ea.targetView;
+    const api = view && view.excalidrawAPI;
+    const context = getObsidianAppAndVault();
+    const obsidianVault = context.vault;
+
+    if (!api) {
+        throw new Error("Failed to get Excalidraw API");
+    }
+
+    if (!obsidianVault) {
+        console.error("[INSERT] Obsidian context unavailable", {
+            hasGlobalApp: typeof globalThis !== "undefined" && !!globalThis.app,
+            hasWindowApp: typeof window !== "undefined" && !!window.app,
+            hasEaApp: !!(ea && ea.app),
+            hasViewApp: !!(view && view.app)
+        });
+        throw new Error("Failed to get Obsidian vault");
+    }
+
+    if (typeof ea.getAttachmentFilepath !== "function" || typeof ea.addImage !== "function") {
+        throw new Error("Current Excalidraw Automate version does not support persistent image insertion");
+    }
+
+    const safeSvg = sanitizeSvg(icon.show_svg);
+    const timestamp = Date.now();
+    const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const attachmentName = `Pasted Image ${formatAttachmentTimestamp(timestamp)}_${randomId}.svg`;
+    const attachmentPath = await ea.getAttachmentFilepath(attachmentName);
+    const normalizedAttachmentPath = attachmentPath.replace(/\\/g, "/");
+    const lastSlashIndex = normalizedAttachmentPath.lastIndexOf("/");
+    const folderPath = lastSlashIndex >= 0 ? normalizedAttachmentPath.substring(0, lastSlashIndex) : "";
+
+    if (folderPath && obsidianVault.adapter && typeof obsidianVault.adapter.mkdir === "function") {
+        try {
+            await obsidianVault.adapter.mkdir(folderPath);
+        } catch (error) {
+            // Folder may already exist.
+        }
+    }
+
+    const existingAttachment = typeof obsidianVault.getAbstractFileByPath === "function"
+        ? obsidianVault.getAbstractFileByPath(normalizedAttachmentPath)
+        : null;
+
+    if (existingAttachment && typeof obsidianVault.modify === "function") {
+        await obsidianVault.modify(existingAttachment, safeSvg);
+    } else if (typeof obsidianVault.create === "function") {
+        await obsidianVault.create(normalizedAttachmentPath, safeSvg);
+    } else if (obsidianVault.adapter && typeof obsidianVault.adapter.write === "function") {
+        await obsidianVault.adapter.write(normalizedAttachmentPath, safeSvg);
+    } else {
+        throw new Error("Vault does not support writing attachment files");
+    }
+
+    const beforeElementIds = new Set(api.getSceneElements().map((element) => element.id));
+    const insertedElementId = await ea.addImage(x, y, normalizedAttachmentPath, false, false);
+
+    if (typeof ea.addElementsToView === "function") {
+        await ea.addElementsToView(false, true, true);
+    }
+
+    const sceneElements = api.getSceneElements();
+    const insertedElement =
+        sceneElements.find((element) => element.id === insertedElementId) ||
+        sceneElements.find((element) => element.type === "image" && !beforeElementIds.has(element.id));
+
+    if (!insertedElement) {
+        throw new Error("Image element was not added to the scene");
+    }
+
+    const resizedElement = {
+        ...insertedElement,
+        x,
+        y,
+        width: size,
+        height: size,
+        version: (insertedElement.version || 1) + 1,
+        versionNonce: Math.floor(Math.random() * 1000000),
+        updated: Date.now()
+    };
+
+    api.updateScene({
+        elements: sceneElements.map((element) => element.id === resizedElement.id ? resizedElement : element)
+    });
+
+    api.selectElements([resizedElement]);
+    api.refresh();
+
+    return {
+        attachmentPath: normalizedAttachmentPath,
+        element: resizedElement
+    };
+}
+
 await main();
 
 // ===== 工具按钮入口 =====
@@ -1157,6 +1790,460 @@ await main();
  * Excalidraw 工具按钮点击处理函数
  * 当用户点击工具栏的图标按钮时调用
  */
+function getVisibleSceneCenter() {
+    const view = ea.targetView;
+    const api = view && view.excalidrawAPI;
+
+    if (!api) {
+        throw new Error("Failed to get Excalidraw API");
+    }
+
+    const appState = api.getAppState();
+    const zoom = (appState.zoom && appState.zoom.value) || 1;
+    const container =
+        (view.containerEl && view.containerEl.querySelector && view.containerEl.querySelector(".excalidraw-container")) ||
+        (view.containerEl && view.containerEl.querySelector && view.containerEl.querySelector(".excalidraw")) ||
+        view.containerEl;
+    const rect = container && container.getBoundingClientRect ? container.getBoundingClientRect() : null;
+
+    let centerX;
+    let centerY;
+
+    if (rect) {
+        centerX = (rect.width / 2 - appState.scrollX) / zoom;
+        centerY = (rect.height / 2 - appState.scrollY) / zoom;
+    } else {
+        centerX = -appState.scrollX / zoom;
+        centerY = -appState.scrollY / zoom;
+    }
+
+    return { centerX, centerY, zoom };
+}
+
+async function insertPersistentSvgIcon(icon, x, y, size) {
+    const view = ea.targetView;
+    const api = view && view.excalidrawAPI;
+    const context = getObsidianAppAndVault();
+    const obsidianVault = context.vault;
+
+    if (!api) {
+        throw new Error("Failed to get Excalidraw API");
+    }
+
+    if (!obsidianVault) {
+        throw new Error("Failed to get Obsidian vault");
+    }
+
+    if (typeof ea.getAttachmentFilepath !== "function" || typeof ea.addImage !== "function") {
+        throw new Error("Current Excalidraw Automate version does not support persistent image insertion");
+    }
+
+    const safeSvg = sanitizeSvg(icon.show_svg);
+    const base64Svg = btoa(unescape(encodeURIComponent(safeSvg)));
+    const dataUrl = `data:image/svg+xml;base64,${base64Svg}`;
+    const timestamp = Date.now();
+    const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const attachmentName = `Pasted Image ${formatAttachmentTimestamp(timestamp)}_${randomId}.svg`;
+    const attachmentPath = await ea.getAttachmentFilepath(attachmentName);
+    const normalizedAttachmentPath = attachmentPath.replace(/\\/g, "/");
+    const lastSlashIndex = normalizedAttachmentPath.lastIndexOf("/");
+    const folderPath = lastSlashIndex >= 0 ? normalizedAttachmentPath.substring(0, lastSlashIndex) : "";
+
+    if (folderPath && obsidianVault.adapter && typeof obsidianVault.adapter.mkdir === "function") {
+        try {
+            await obsidianVault.adapter.mkdir(folderPath);
+        } catch (error) {
+            // Folder may already exist.
+        }
+    }
+
+    const existingAttachment = typeof obsidianVault.getAbstractFileByPath === "function"
+        ? obsidianVault.getAbstractFileByPath(normalizedAttachmentPath)
+        : null;
+
+    if (existingAttachment && typeof obsidianVault.modify === "function") {
+        await obsidianVault.modify(existingAttachment, safeSvg);
+    } else if (typeof obsidianVault.create === "function") {
+        await obsidianVault.create(normalizedAttachmentPath, safeSvg);
+    } else if (obsidianVault.adapter && typeof obsidianVault.adapter.write === "function") {
+        await obsidianVault.adapter.write(normalizedAttachmentPath, safeSvg);
+    } else {
+        throw new Error("Vault does not support writing attachment files");
+    }
+
+    const beforeElementIds = new Set(api.getSceneElements().map((element) => element.id));
+    const insertedElementId = await ea.addImage(x, y, normalizedAttachmentPath, false, false);
+
+    if (typeof ea.addElementsToView === "function") {
+        await ea.addElementsToView(false, true, true);
+    }
+
+    let sceneElements = api.getSceneElements();
+    const newImageCandidates = sceneElements.filter((element) => {
+        if (element.type !== "image") return false;
+        if (!beforeElementIds.has(element.id)) return true;
+        if (element.fileId && !beforeImageFileIds.has(element.fileId)) return true;
+        return false;
+    });
+
+    let insertedElement =
+        sceneElements.find((element) => element.id === insertedElementId) ||
+        newImageCandidates.sort((a, b) => (b.updated || 0) - (a.updated || 0))[0] ||
+        null;
+
+    if (!insertedElement) {
+        throw new Error("Image element was not added to the scene");
+    }
+
+    let hydratedFiles = null;
+
+    if (insertedElement.fileId) {
+        const existingFiles = api.getFiles();
+        const hydratedFile = {
+            id: insertedElement.fileId,
+            mimeType: "image/svg+xml",
+            dataURL: dataUrl,
+            size: dataUrl.length,
+            created: timestamp,
+            lastRetrieved: timestamp
+        };
+
+        if (typeof api.addFiles === "function") {
+            api.addFiles({ [insertedElement.fileId]: hydratedFile });
+        }
+
+        hydratedFiles = { ...existingFiles, [insertedElement.fileId]: hydratedFile };
+
+        api.updateScene({
+            files: hydratedFiles
+        });
+
+        sceneElements = api.getSceneElements();
+        insertedElement = sceneElements.find((element) => element.id === insertedElement.id) || insertedElement;
+    }
+
+    const resizedElement = {
+        ...insertedElement,
+        x,
+        y,
+        width: size,
+        height: size,
+        status: "saved",
+        scale: [1, 1],
+        version: (insertedElement.version || 1) + 1,
+        versionNonce: Math.floor(Math.random() * 1000000),
+        updated: Date.now()
+    };
+
+    api.updateScene({
+        elements: sceneElements.map((element) => element.id === resizedElement.id ? resizedElement : element),
+        files: hydratedFiles || api.getFiles()
+    });
+
+    const rerenderedElement = await forceImageElementRerender(api, resizedElement.id, hydratedFiles || api.getFiles());
+    const finalElement = rerenderedElement || resizedElement;
+
+    api.selectElements([finalElement]);
+    api.refresh();
+
+    return {
+        attachmentPath: normalizedAttachmentPath,
+        element: finalElement
+    };
+}
+
+async function insertIconToScreenCenter(icon) {
+    if (!icon) {
+        console.error("[INSERT] icon is empty");
+        return;
+    }
+
+    try {
+        const { centerX, centerY, zoom } = getVisibleSceneCenter();
+        const iconSize = 32 / zoom;
+        const iconX = centerX - iconSize / 2;
+        const iconY = centerY - iconSize / 2;
+        let result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+        const latestCenter = getVisibleSceneCenter();
+        const finalElement = result.element;
+        const correctedX = latestCenter.centerX - finalElement.width / 2;
+        const correctedY = latestCenter.centerY - finalElement.height / 2;
+
+        if (Math.abs(finalElement.x - correctedX) > 0.5 || Math.abs(finalElement.y - correctedY) > 0.5) {
+            const api = ea.targetView && ea.targetView.excalidrawAPI;
+            const sceneElements = api.getSceneElements();
+            const correctedElement = {
+                ...finalElement,
+                x: correctedX,
+                y: correctedY,
+                version: (finalElement.version || 1) + 1,
+                versionNonce: Math.floor(Math.random() * 1000000),
+                updated: Date.now()
+            };
+
+            api.updateScene({
+                elements: sceneElements.map((element) => element.id === correctedElement.id ? correctedElement : element),
+                files: api.getFiles()
+            });
+            api.selectElements([correctedElement]);
+            api.refresh();
+            result = { ...result, element: correctedElement };
+        }
+
+        new Notice(`Icon "${icon.name}" inserted at viewport center`);
+    } catch (error) {
+        console.error("[INSERT] failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+    }
+}
+
+async function insertIconToCanvas(point) {
+    const icon = state.selectedIcon;
+    if (!icon) return;
+
+    try {
+        const api = ea.targetView && ea.targetView.excalidrawAPI;
+        if (!api) {
+            throw new Error("Failed to get Excalidraw API");
+        }
+
+        const iconSize = 32;
+        const centerX = point && typeof point.scrollX === "number" ? point.scrollX : api.getAppState().scrollX;
+        const centerY = point && typeof point.scrollY === "number" ? point.scrollY : api.getAppState().scrollY;
+        const iconX = centerX - iconSize / 2;
+        const iconY = centerY - iconSize / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+
+        new Notice(`Icon "${icon.name}" inserted`);
+    } catch (error) {
+        console.error("[INSERT] canvas placement failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+    }
+}
+
+// Final override: use Excalidraw Automate's image insertion flow directly, then resize the returned element by id.
+async function insertPersistentSvgIcon(icon, x, y, size) {
+    const view = ea.targetView;
+    const api = view && view.excalidrawAPI;
+    const context = getObsidianAppAndVault();
+    const obsidianVault = context.vault;
+
+    if (!api) {
+        throw new Error("Failed to get Excalidraw API");
+    }
+
+    if (!obsidianVault) {
+        throw new Error("Failed to get Obsidian vault");
+    }
+
+    if (typeof ea.getAttachmentFilepath !== "function" || typeof ea.addImage !== "function") {
+        throw new Error("Current Excalidraw Automate version does not support persistent image insertion");
+    }
+
+    const safeSvg = sanitizeSvg(icon.show_svg);
+    const timestamp = Date.now();
+    const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const attachmentName = `Pasted Image ${formatAttachmentTimestamp(timestamp)}_${randomId}.svg`;
+    const attachmentPath = await ea.getAttachmentFilepath(attachmentName);
+    const normalizedAttachmentPath = attachmentPath.replace(/\\/g, "/");
+    const lastSlashIndex = normalizedAttachmentPath.lastIndexOf("/");
+    const folderPath = lastSlashIndex >= 0 ? normalizedAttachmentPath.substring(0, lastSlashIndex) : "";
+
+    if (folderPath && obsidianVault.adapter && typeof obsidianVault.adapter.mkdir === "function") {
+        try {
+            await obsidianVault.adapter.mkdir(folderPath);
+        } catch (error) {
+            // Folder may already exist.
+        }
+    }
+
+    const existingAttachment = typeof obsidianVault.getAbstractFileByPath === "function"
+        ? obsidianVault.getAbstractFileByPath(normalizedAttachmentPath)
+        : null;
+
+    if (existingAttachment && typeof obsidianVault.modify === "function") {
+        await obsidianVault.modify(existingAttachment, safeSvg);
+    } else if (typeof obsidianVault.create === "function") {
+        await obsidianVault.create(normalizedAttachmentPath, safeSvg);
+    } else if (obsidianVault.adapter && typeof obsidianVault.adapter.write === "function") {
+        await obsidianVault.adapter.write(normalizedAttachmentPath, safeSvg);
+    } else {
+        throw new Error("Vault does not support writing attachment files");
+    }
+
+    if (typeof ea.clear === "function") {
+        ea.clear();
+    } else if (typeof ea.reset === "function") {
+        ea.reset();
+    }
+
+    const insertedElementId = await ea.addImage(x, y, normalizedAttachmentPath, false, false);
+    const insertedDraft = typeof ea.getElement === "function" ? ea.getElement(insertedElementId) : null;
+
+    if (insertedDraft) {
+        insertedDraft.x = x;
+        insertedDraft.y = y;
+        insertedDraft.width = size;
+        insertedDraft.height = size;
+        insertedDraft.scale = [1, 1];
+        insertedDraft.status = "saved";
+    }
+
+    if (typeof ea.addElementsToView === "function") {
+        await ea.addElementsToView(false, true, true);
+    }
+
+    await waitForNextFrame();
+
+    const sceneElements = api.getSceneElements();
+    const insertedElement = sceneElements.find((element) => element.id === insertedElementId);
+
+    if (!insertedElement) {
+        throw new Error("Image element was not added to the scene");
+    }
+
+    api.selectElements([insertedElement]);
+    api.refresh();
+
+    return {
+        attachmentPath: normalizedAttachmentPath,
+        element: insertedElement
+    };
+}
+
 function action() {
     openSearchPanel();
+}
+
+// Final stable overrides to avoid hitting earlier partially-edited implementations.
+async function insertPersistentSvgIcon(icon, x, y, size) {
+    const view = ea.targetView;
+    const api = view && view.excalidrawAPI;
+    const context = getObsidianAppAndVault();
+    const obsidianVault = context.vault;
+
+    if (!api) {
+        throw new Error("Failed to get Excalidraw API");
+    }
+
+    if (!obsidianVault) {
+        throw new Error("Failed to get Obsidian vault");
+    }
+
+    if (typeof ea.getAttachmentFilepath !== "function" || typeof ea.addImage !== "function") {
+        throw new Error("Current Excalidraw Automate version does not support persistent image insertion");
+    }
+
+    const safeSvg = sanitizeSvg(icon.show_svg);
+    const timestamp = Date.now();
+    const randomId = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const attachmentName = `Pasted Image ${formatAttachmentTimestamp(timestamp)}_${randomId}.svg`;
+    const attachmentPath = await ea.getAttachmentFilepath(attachmentName);
+    const normalizedAttachmentPath = attachmentPath.replace(/\\/g, "/");
+    const lastSlashIndex = normalizedAttachmentPath.lastIndexOf("/");
+    const folderPath = lastSlashIndex >= 0 ? normalizedAttachmentPath.substring(0, lastSlashIndex) : "";
+
+    if (folderPath && obsidianVault.adapter && typeof obsidianVault.adapter.mkdir === "function") {
+        try {
+            await obsidianVault.adapter.mkdir(folderPath);
+        } catch (error) {
+            // Folder may already exist.
+        }
+    }
+
+    const existingAttachment = typeof obsidianVault.getAbstractFileByPath === "function"
+        ? obsidianVault.getAbstractFileByPath(normalizedAttachmentPath)
+        : null;
+
+    if (existingAttachment && typeof obsidianVault.modify === "function") {
+        await obsidianVault.modify(existingAttachment, safeSvg);
+    } else if (typeof obsidianVault.create === "function") {
+        await obsidianVault.create(normalizedAttachmentPath, safeSvg);
+    } else if (obsidianVault.adapter && typeof obsidianVault.adapter.write === "function") {
+        await obsidianVault.adapter.write(normalizedAttachmentPath, safeSvg);
+    } else {
+        throw new Error("Vault does not support writing attachment files");
+    }
+
+    if (typeof ea.clear === "function") {
+        ea.clear();
+    } else if (typeof ea.reset === "function") {
+        ea.reset();
+    }
+
+    const insertedElementId = await ea.addImage(x, y, normalizedAttachmentPath, false, false);
+    const insertedDraft = typeof ea.getElement === "function" ? ea.getElement(insertedElementId) : null;
+
+    if (insertedDraft) {
+        insertedDraft.x = x;
+        insertedDraft.y = y;
+        insertedDraft.width = size;
+        insertedDraft.height = size;
+        insertedDraft.scale = [1, 1];
+        insertedDraft.status = "saved";
+    }
+
+    if (typeof ea.addElementsToView === "function") {
+        await ea.addElementsToView(false, true, true);
+    }
+
+    await waitForNextFrame();
+
+    const sceneElements = api.getSceneElements();
+    const insertedElement = sceneElements.find((element) => element.id === insertedElementId);
+
+    if (!insertedElement) {
+        throw new Error("Image element was not added to the scene");
+    }
+
+    api.selectElements([insertedElement]);
+    api.refresh();
+
+    return {
+        attachmentPath: normalizedAttachmentPath,
+        element: insertedElement
+    };
+}
+
+async function insertIconToScreenCenter(icon) {
+    if (!icon) return;
+
+    try {
+        const { centerX, centerY, zoom } = getVisibleSceneCenter();
+        const iconSize = 32 / zoom;
+        const iconX = centerX - iconSize / 2;
+        const iconY = centerY - iconSize / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+        new Notice(`Icon "${icon.name}" inserted at viewport center`);
+        return result;
+    } catch (error) {
+        console.error("[INSERT] failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+        throw error;
+    }
+}
+
+async function insertIconToCanvas(point) {
+    const icon = state.selectedIcon;
+    if (!icon) return;
+
+    try {
+        const api = ea.targetView && ea.targetView.excalidrawAPI;
+        if (!api) {
+            throw new Error("Failed to get Excalidraw API");
+        }
+
+        const iconSize = 32;
+        const centerX = point && typeof point.scrollX === "number" ? point.scrollX : api.getAppState().scrollX;
+        const centerY = point && typeof point.scrollY === "number" ? point.scrollY : api.getAppState().scrollY;
+        const iconX = centerX - iconSize / 2;
+        const iconY = centerY - iconSize / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+        new Notice(`Icon "${icon.name}" inserted`);
+        return result;
+    } catch (error) {
+        console.error("[INSERT] canvas placement failed:", error);
+        new Notice(`Insert failed: ${error.message}`);
+        throw error;
+    }
 }
