@@ -155,6 +155,7 @@ styleElement.textContent = `
     justify-content: center;
     background: var(--background-primary);
     border: 1px solid transparent;
+    overflow: hidden;
 }
 
 .icon-item:hover {
@@ -170,8 +171,10 @@ styleElement.textContent = `
 }
 
 .icon-item svg {
-    width: 22px;
-    height: 22px;
+    max-width: 22px;
+    max-height: 22px;
+    width: auto;
+    height: auto;
     fill: currentColor;
     pointer-events: none;
     flex-shrink: 0;
@@ -738,10 +741,11 @@ function sanitizeSvg(svgString) {
 
     const svgElement = doc.documentElement;
 
-    // 优化 SVG 以确保正确填充容器
-    // 设置或更新 viewBox 为 0 0 1024 1024（语雀图标的标准尺寸）
+    // 如果没有 viewBox，从 SVG 的 width/height 属性推算，保留原始宽高比
     if (!svgElement.getAttribute('viewBox')) {
-        svgElement.setAttribute('viewBox', '0 0 1024 1024');
+        const w = parseFloat(svgElement.getAttribute('width')) || 1024;
+        const h = parseFloat(svgElement.getAttribute('height')) || 1024;
+        svgElement.setAttribute('viewBox', `0 0 ${w} ${h}`);
     }
 
     // 设置 width 和 height 为 100%，确保填充容器
@@ -752,6 +756,61 @@ function sanitizeSvg(svgString) {
     svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
     return svgElement.outerHTML;
+}
+
+/**
+ * 获取图标的宽高比
+ * @param {Object} icon - 图标对象（需包含 show_svg 字段）
+ * @returns {number} 宽高比 (width / height)，默认 1（正方形）
+ */
+function getIconAspectRatio(icon) {
+    if (!icon || !icon.show_svg) return 1;
+
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(icon.show_svg, 'image/svg+xml');
+        const svg = doc.documentElement;
+
+        // 优先从 viewBox 获取
+        const viewBox = svg.getAttribute('viewBox');
+        if (viewBox) {
+            const parts = viewBox.trim().split(/[\s,]+/);
+            if (parts.length === 4) {
+                const w = parseFloat(parts[2]);
+                const h = parseFloat(parts[3]);
+                if (w > 0 && h > 0) return w / h;
+            }
+        }
+
+        // 从 width/height 属性获取
+        const w = parseFloat(svg.getAttribute('width'));
+        const h = parseFloat(svg.getAttribute('height'));
+        if (w > 0 && h > 0) return w / h;
+    } catch (e) {
+        // ignore parse errors
+    }
+
+    // 从 icon 对象的 width/height 字段获取
+    if (icon.width > 0 && icon.height > 0) return icon.width / icon.height;
+
+    return 1; // 默认正方形
+}
+
+/**
+ * 根据宽高比计算图标的显示尺寸
+ * 以 baseSize 为短边，按比例计算长边
+ * @param {number} baseSize - 基础尺寸（短边）
+ * @param {number} aspectRatio - 宽高比 (width / height)
+ * @returns {{width: number, height: number}} 计算后的尺寸
+ */
+function calculateIconSize(baseSize, aspectRatio) {
+    if (aspectRatio >= 1) {
+        // 宽 >= 高，高度为 baseSize，宽度按比例
+        return { width: baseSize * aspectRatio, height: baseSize };
+    } else {
+        // 高 > 宽，宽度为 baseSize，高度按比例
+        return { width: baseSize, height: baseSize / aspectRatio };
+    }
 }
 
 function ensureIconPreviewOverlay() {
@@ -2116,7 +2175,8 @@ function action() {
 }
 
 // Final stable overrides to avoid hitting earlier partially-edited implementations.
-async function insertPersistentSvgIcon(icon, x, y, size) {
+async function insertPersistentSvgIcon(icon, x, y, iconWidth, iconHeight) {
+    // iconWidth, iconHeight: already calculated with correct aspect ratio
     const view = ea.targetView;
     const api = view && view.excalidrawAPI;
     const context = getObsidianAppAndVault();
@@ -2177,8 +2237,8 @@ async function insertPersistentSvgIcon(icon, x, y, size) {
     if (insertedDraft) {
         insertedDraft.x = x;
         insertedDraft.y = y;
-        insertedDraft.width = size;
-        insertedDraft.height = size;
+        insertedDraft.width = iconWidth;
+        insertedDraft.height = iconHeight;
         insertedDraft.scale = [1, 1];
         insertedDraft.status = "saved";
     }
@@ -2210,10 +2270,12 @@ async function insertIconToScreenCenter(icon) {
 
     try {
         const { centerX, centerY, zoom } = getVisibleSceneCenter();
-        const iconSize = 32 / zoom;
-        const iconX = centerX - iconSize / 2;
-        const iconY = centerY - iconSize / 2;
-        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+        const baseSize = 32 / zoom;
+        const aspectRatio = getIconAspectRatio(icon);
+        const { width: iconWidth, height: iconHeight } = calculateIconSize(baseSize, aspectRatio);
+        const iconX = centerX - iconWidth / 2;
+        const iconY = centerY - iconHeight / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconWidth, iconHeight);
         new Notice(`Icon "${icon.name}" inserted at viewport center`);
         return result;
     } catch (error) {
@@ -2233,12 +2295,14 @@ async function insertIconToCanvas(point) {
             throw new Error("Failed to get Excalidraw API");
         }
 
-        const iconSize = 32;
+        const baseSize = 32;
+        const aspectRatio = getIconAspectRatio(icon);
+        const { width: iconWidth, height: iconHeight } = calculateIconSize(baseSize, aspectRatio);
         const centerX = point && typeof point.scrollX === "number" ? point.scrollX : api.getAppState().scrollX;
         const centerY = point && typeof point.scrollY === "number" ? point.scrollY : api.getAppState().scrollY;
-        const iconX = centerX - iconSize / 2;
-        const iconY = centerY - iconSize / 2;
-        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconSize);
+        const iconX = centerX - iconWidth / 2;
+        const iconY = centerY - iconHeight / 2;
+        const result = await insertPersistentSvgIcon(icon, iconX, iconY, iconWidth, iconHeight);
         new Notice(`Icon "${icon.name}" inserted`);
         return result;
     } catch (error) {
